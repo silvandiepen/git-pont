@@ -1,0 +1,8 @@
+{
+  "name": "@git-pont/docs-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  }
+}
