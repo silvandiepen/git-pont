@@ -6,8 +6,10 @@
     "docs/site"
   ],
   "scripts": {
-    "swift:build": "swift build --package-path libs/swift",
-    "swift:test": "swift test --package-path libs/swift",
+    "swift:build": "swift build",
+    "swift:test": "swift test",
+    "swift:build:lib": "swift build --package-path libs/swift",
+    "swift:test:lib": "swift test --package-path libs/swift",
     "docs:build": "node docs/site/build.mjs",
     "validate": "bash scripts/validate-local.sh",
     "validate:live": "bash scripts/validate-live.sh"

@@ -75,9 +75,13 @@ npm run validate
 The Swift library can also be built directly:
 
 ```sh
+swift build
+swift test
 swift build --package-path libs/swift
 swift test --package-path libs/swift
 ```
+
+The root `Package.swift` is the public SwiftPM entry point for external consumers. `libs/swift/Package.swift` remains as the library-local manifest for focused development inside the monorepo.
 
 Live provider smoke tests are included but disabled unless credentials are present in the environment:
 

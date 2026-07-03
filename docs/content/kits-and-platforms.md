@@ -10,6 +10,8 @@ libs/swift
 
 `libs/swift` is implemented as a Swift Package for Apple platforms and is the only v1 implementation target. Lezin and GitFolder are the first consumers.
 
+The repository root also contains a public `Package.swift` that points SwiftPM at the `libs/swift` source and test paths. External Swift projects should depend on the repository URL, not on a `libs/swift` subdirectory URL.
+
 Future libraries may be added without changing the shared product model:
 
 ```txt

@@ -6,6 +6,8 @@ Items marked "current" are covered by the checked-in Swift package and local val
 
 ## Package
 
+- Current: `swift build` passes from the root public SwiftPM manifest.
+- Current: `swift test` passes from the root public SwiftPM manifest.
 - Current: `swift build --package-path libs/swift` passes.
 - Current: `swift test --package-path libs/swift` passes.
 - Current: `npm run docs:build` passes.

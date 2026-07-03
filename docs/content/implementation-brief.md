@@ -50,8 +50,8 @@ The Swift library is ready for app integration when:
 
 The repository is buildable now:
 
-- Swift package build passes from `libs/swift`.
-- Swift package tests pass from `libs/swift`.
+- Swift package build passes from the root public SwiftPM manifest and from `libs/swift`.
+- Swift package tests pass from the root public SwiftPM manifest and from `libs/swift`.
 - Docs build from `docs/content` through `docs/site/girk.json`.
 - Root `npm run validate` runs Swift build, Swift tests, and docs build.
 - `npm run validate:live` is the explicit release gate for opt-in live write tests against dedicated provider repositories.
