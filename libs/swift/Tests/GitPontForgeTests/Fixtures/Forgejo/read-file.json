@@ -1,0 +1,8 @@
+{
+  "type": "file",
+  "name": "hello.txt",
+  "path": "docs/hello.txt",
+  "content": "aGVsbG8=",
+  "sha": "blob-sha",
+  "size": 5
+}

@@ -1,0 +1,24 @@
+{
+  "name": "git-pont",
+  "title": "git-pont",
+  "contentDir": "../content",
+  "outputDir": "./dist",
+  "index": "index.md",
+  "navigation": [
+    "index.md",
+    "implementation-brief.md",
+    "kits-and-platforms.md",
+    "architecture.md",
+    "provider-model.md",
+    "authentication.md",
+    "provider-apis.md",
+    "security.md",
+    "git-cli-credentials.md",
+    "testing.md",
+    "implementation-plan.md",
+    "lezin-integration.md",
+    "gitfolder-integration.md",
+    "acceptance-criteria.md",
+    "decisions.md"
+  ]
+}

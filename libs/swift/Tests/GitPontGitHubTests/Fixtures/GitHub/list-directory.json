@@ -1,0 +1,13 @@
+[
+  {
+    "type": "file",
+    "name": "a.md",
+    "path": "docs/a.md",
+    "size": 10
+  },
+  {
+    "type": "dir",
+    "name": "nested",
+    "path": "docs/nested"
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "type": "file",
+  "encoding": "base64",
+  "size": 5,
+  "name": "hello.txt",
+  "path": "docs/hello.txt",
+  "content": "aGVsbG8=\n",
+  "sha": "blob-sha",
+  "html_url": "https://github.com/owner/repo/blob/main/docs/hello.txt"
+}
