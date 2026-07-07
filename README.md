@@ -128,6 +128,8 @@ GitPontGitCLI
 
 `GitPontForge` implements Forgejo and Gitea. Codeberg is a preset Forgejo instance, not a separate provider kind.
 
+`GitPontBitbucket` implements Bitbucket Cloud.
+
 `GitPontKeychain` provides an Apple-platform credential store implementation.
 
 `GitPontGitCLI` provides provider-neutral credential helper/environment output for apps that use the system `git` command.
@@ -144,8 +146,7 @@ v1 supports:
 - Forgejo custom instance
 - Gitea custom instance
 - Codeberg (preset Forgejo instance)
-
-Skip Bitbucket for v1.
+- Bitbucket Cloud
 
 ## Primary Consumers
 

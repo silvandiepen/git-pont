@@ -391,6 +391,35 @@ public struct GitHubProvider: GitProvider, GitAuthenticationProvider {
         return dto.pullRequest
     }
 
+    public func findPullRequest(_ query: GitPullRequestQuery, context: GitProviderRequestContext) async throws -> GitPullRequest? {
+        _ = try context.requiredCredential
+        let sourceNamespace = query.sourceRepository?.namespace ?? query.repository.namespace
+        let head = "\(sourceNamespace):\(query.sourceBranch)"
+        var components = URLComponents(
+            url: GitProviderInstance.github.apiBaseURL
+                .appendingPathComponent("repos")
+                .appendingPathComponent(query.repository.namespace)
+                .appendingPathComponent(query.repository.name)
+                .appendingPathComponent("pulls"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "state", value: "open"),
+            URLQueryItem(name: "head", value: head),
+            URLQueryItem(name: "base", value: query.targetBranch),
+            URLQueryItem(name: "per_page", value: "1")
+        ]
+        guard let url = components?.url else {
+            throw GitPontError.invalidProviderResponse("Could not build GitHub pull request lookup URL.")
+        }
+        let dtos: [GitHubPullRequestDTO] = try await sendJSON(HTTPRequest(
+            method: "GET",
+            url: url,
+            headers: try headers(for: context)
+        ))
+        return dtos.first?.pullRequest
+    }
+
     private func headers(for context: GitProviderRequestContext) throws -> [String: String] {
         guard let credential = context.credential else {
             return ["Accept": "application/vnd.github+json"]

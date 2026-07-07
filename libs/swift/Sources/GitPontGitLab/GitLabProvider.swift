@@ -401,6 +401,33 @@ public struct GitLabProvider: GitProvider, GitAuthenticationProvider {
         return dto.pullRequest
     }
 
+    public func findPullRequest(_ query: GitPullRequestQuery, context: GitProviderRequestContext) async throws -> GitPullRequest? {
+        _ = try context.requiredCredential
+        let callRepository = query.sourceRepository ?? query.repository
+        var components = URLComponents(
+            url: callRepository.instance.apiBaseURL
+                .appendingPathComponent("projects")
+                .gitPontAppendingEncodedPathComponent(projectID(for: callRepository))
+                .appendingPathComponent("merge_requests"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "state", value: "opened"),
+            URLQueryItem(name: "source_branch", value: query.sourceBranch),
+            URLQueryItem(name: "target_branch", value: query.targetBranch),
+            URLQueryItem(name: "per_page", value: "1")
+        ]
+        guard let url = components?.url else {
+            throw GitPontError.invalidProviderResponse("Could not build GitLab merge request lookup URL.")
+        }
+        let dtos: [GitLabMergeRequestDTO] = try await sendJSON(HTTPRequest(
+            method: "GET",
+            url: url,
+            headers: try headers(for: context)
+        ))
+        return dtos.first?.pullRequest
+    }
+
     private func headers(for context: GitProviderRequestContext) throws -> [String: String] {
         guard let credential = context.credential else {
             return [:]

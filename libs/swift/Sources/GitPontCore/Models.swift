@@ -7,6 +7,7 @@ public enum GitProviderKind: String, Hashable, Sendable, Codable {
     case gitLabSelfHosted
     case forgejo
     case gitea
+    case bitbucketCloud
 }
 
 /// A concrete provider host and API endpoint.
@@ -49,6 +50,14 @@ public extension GitProviderInstance {
         baseURL: URL(string: "https://codeberg.org")!,
         apiBaseURL: URL(string: "https://codeberg.org/api/v1")!,
         displayName: "Codeberg"
+    )
+
+    static let bitbucketCloud = GitProviderInstance(
+        id: "bitbucket.org",
+        kind: .bitbucketCloud,
+        baseURL: URL(string: "https://bitbucket.org")!,
+        apiBaseURL: URL(string: "https://api.bitbucket.org/2.0")!,
+        displayName: "Bitbucket"
     )
 
     static func gitLabSelfHosted(baseURL: URL, displayName: String? = nil) -> GitProviderInstance {
@@ -415,6 +424,21 @@ public struct GitPullRequestRequest: Sendable {
     }
 }
 
+/// Query for an existing open pull request or merge request.
+public struct GitPullRequestQuery: Sendable {
+    public var repository: GitRepositoryReference
+    public var sourceBranch: String
+    public var sourceRepository: GitRepositoryReference?
+    public var targetBranch: String
+
+    public init(repository: GitRepositoryReference, sourceBranch: String, sourceRepository: GitRepositoryReference? = nil, targetBranch: String) {
+        self.repository = repository
+        self.sourceBranch = sourceBranch
+        self.sourceRepository = sourceRepository
+        self.targetBranch = targetBranch
+    }
+}
+
 /// Provider-neutral pull request or merge request result.
 public struct GitPullRequest: Hashable, Sendable, Codable {
     public var id: String
@@ -441,6 +465,7 @@ public struct GitChangeSubmission: Sendable {
     /// Strategy used by the facade to submit a change.
     public enum Strategy: Sendable {
         case directCommit
+        case existingBranch(branchName: String)
         case branchAndPullRequest(branchName: String, title: String, body: String?, draft: Bool)
         case forkAndPullRequest(branchName: String, title: String, body: String?, draft: Bool)
         case automatic(branchName: String, title: String, body: String?, draft: Bool)

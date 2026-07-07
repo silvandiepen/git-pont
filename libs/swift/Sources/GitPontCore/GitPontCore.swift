@@ -195,6 +195,14 @@ public final class GitPont: Sendable {
         }
     }
 
+    public func findPullRequest(_ query: GitPullRequestQuery) async throws -> GitPullRequest? {
+        let provider = try provider(for: query.repository.instance)
+        let context = try await requiredContext(for: query.repository.instance)
+        return try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.findPullRequest(query, context: $0)
+        }
+    }
+
     public func submitChange(_ submission: GitChangeSubmission) async throws -> GitChangeResult {
         switch submission.strategy {
         case .directCommit:
@@ -205,6 +213,8 @@ public final class GitPont: Sendable {
                 usedRepository: submission.change.reference.repository,
                 usedBranch: commit.branch
             )
+        case .existingBranch(let branchName):
+            return try await submitExistingBranchCommit(submission.change, branchName: branchName)
         case .branchAndPullRequest(let branchName, let title, let body, let draft):
             return try await submitBranchPullRequest(
                 submission.change,
@@ -300,10 +310,25 @@ public final class GitPont: Sendable {
     }
 
     public func provider(for instance: GitProviderInstance) throws -> any GitProvider {
-        guard let provider = providers.first(where: { $0.kind == instance.kind || $0.canHandle(url: instance.baseURL) }) else {
+        guard let provider = providers.first(where: { providerMatches($0, instance: instance) }) else {
             throw GitPontError.unsupportedCapability("No provider registered for \(instance.kind.rawValue)")
         }
         return provider
+    }
+
+    private func providerMatches(_ provider: any GitProvider, instance: GitProviderInstance) -> Bool {
+        if provider.kind == instance.kind || provider.canHandle(url: instance.baseURL) {
+            return true
+        }
+        switch (provider.kind, instance.kind) {
+        case (.gitLabCloud, .gitLabSelfHosted),
+             (.gitLabSelfHosted, .gitLabCloud),
+             (.forgejo, .gitea),
+             (.gitea, .forgejo):
+            return true
+        default:
+            return false
+        }
     }
 
     private func authenticationProvider(for instance: GitProviderInstance) throws -> any GitAuthenticationProvider {
@@ -458,6 +483,36 @@ public final class GitPont: Sendable {
         return GitChangeResult(
             commit: commit,
             pullRequest: pullRequest,
+            usedRepository: change.reference.repository,
+            usedBranch: branchName
+        )
+    }
+
+    private func submitExistingBranchCommit(
+        _ change: GitFileChange,
+        branchName: String
+    ) async throws -> GitChangeResult {
+        let branchName = try normalizedBranchName(branchName)
+        let provider = try provider(for: change.reference.repository.instance)
+        let context = try await requiredContext(for: change.reference.repository.instance)
+        try await ensureSafeNonBlindWrite(
+            change,
+            provider: provider,
+            context: context,
+            repository: change.reference.repository,
+            ref: branchName
+        )
+
+        let branchChange = change.retargeted(
+            to: change.reference.repository,
+            ref: branchName,
+            targetBranch: branchName,
+            baseBranch: change.reference.ref
+        )
+        let commit = try await provider.commitFile(branchChange, context: context)
+        return GitChangeResult(
+            commit: commit,
+            pullRequest: nil,
             usedRepository: change.reference.repository,
             usedBranch: branchName
         )

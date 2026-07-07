@@ -151,6 +151,43 @@ struct CoreTests {
         #expect(result.pullRequest?.title == "Update README")
     }
 
+    @Test func submitChangeExistingBranchCommitsWithoutCreatingBranchOrPullRequest() async throws {
+        let provider = SubmitChangeProvider(canPush: true, targetBranchProtected: false)
+        let gitPont = await makeGitPont(provider: provider)
+        let change = makeChange()
+
+        let result = try await gitPont.submitChange(GitChangeSubmission(
+            change: change,
+            strategy: .existingBranch(branchName: "edit/readme")
+        ))
+
+        let calls = await provider.snapshot()
+        #expect(calls.createdBranches.isEmpty)
+        #expect(calls.pullRequests.isEmpty)
+        #expect(calls.commits.map(\.targetBranch) == ["edit/readme"])
+        #expect(calls.commits.first?.reference.ref == "edit/readme")
+        #expect(result.usedRepository == change.reference.repository)
+        #expect(result.usedBranch == "edit/readme")
+        #expect(result.pullRequest == nil)
+    }
+
+    @Test func findPullRequestReturnsOpenProviderReviewRequest() async throws {
+        let provider = SubmitChangeProvider(canPush: true, targetBranchProtected: false)
+        let gitPont = await makeGitPont(provider: provider)
+        let change = makeChange()
+
+        let pullRequest = try await gitPont.findPullRequest(GitPullRequestQuery(
+            repository: change.reference.repository,
+            sourceBranch: "edit/readme",
+            targetBranch: "main"
+        ))
+
+        let calls = await provider.snapshot()
+        #expect(calls.pullRequestQueries.map(\.sourceBranch) == ["edit/readme"])
+        #expect(calls.pullRequestQueries.first?.targetBranch == "main")
+        #expect(pullRequest?.webURL.absoluteString == "https://github.com/octocat/hello-world/pull/1")
+    }
+
     @Test func submitChangeForkAndPullRequestCommitsToForkAndOpensPullRequestOnUpstream() async throws {
         let provider = SubmitChangeProvider(canPush: false, targetBranchProtected: false)
         let gitPont = await makeGitPont(provider: provider)
@@ -446,6 +483,7 @@ private struct SubmitChangeSnapshot: Sendable {
     var commits: [GitFileChange]
     var forks: [GitRepositoryReference]
     var pullRequests: [GitPullRequestRequest]
+    var pullRequestQueries: [GitPullRequestQuery]
 }
 
 private actor SubmitChangeProvider: GitProvider {
@@ -464,6 +502,7 @@ private actor SubmitChangeProvider: GitProvider {
     private var commits: [GitFileChange] = []
     private var forks: [GitRepositoryReference] = []
     private var pullRequests: [GitPullRequestRequest] = []
+    private var pullRequestQueries: [GitPullRequestQuery] = []
 
     init(canPush: Bool, targetBranchProtected: Bool, failCommits: Bool = false, failPullRequests: Bool = false) {
         self.canPush = canPush
@@ -569,12 +608,26 @@ private actor SubmitChangeProvider: GitProvider {
         )
     }
 
+    func findPullRequest(_ query: GitPullRequestQuery, context: GitProviderRequestContext) async throws -> GitPullRequest? {
+        pullRequestQueries.append(query)
+        return GitPullRequest(
+            id: "1",
+            number: 1,
+            title: "Update README",
+            webURL: URL(string: "https://github.com/octocat/hello-world/pull/1")!,
+            sourceBranch: query.sourceBranch,
+            targetBranch: query.targetBranch,
+            providerName: displayName
+        )
+    }
+
     func snapshot() -> SubmitChangeSnapshot {
         SubmitChangeSnapshot(
             createdBranches: createdBranches,
             commits: commits,
             forks: forks,
-            pullRequests: pullRequests
+            pullRequests: pullRequests,
+            pullRequestQueries: pullRequestQueries
         )
     }
 }

@@ -30,6 +30,8 @@ public extension GitPont {
             username = connection.authMethod == .personalAccessToken ? connection.accountLogin : "oauth2"
         case .forgejo, .gitea:
             username = connection.accountLogin.isEmpty ? "git-pont" : connection.accountLogin
+        case .bitbucketCloud:
+            username = "x-token-auth"
         }
         let helper = "!f() { printf \"username=%s\\npassword=%s\\n\" \"$GITPONT_USERNAME\" \"$GITPONT_TOKEN\"; }; f"
         return GitCLICredentialContext(
@@ -53,6 +55,8 @@ public extension GitPont {
             return .gitLabCloud
         case "codeberg.org":
             return .codeberg
+        case "bitbucket.org":
+            return .bitbucketCloud
         default:
             let matches = try await connections().filter { $0.instance.baseURL.host?.lowercased() == host }
             guard let instance = matches.first?.instance else {

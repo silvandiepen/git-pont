@@ -50,6 +50,13 @@ public protocol GitProvider: Sendable {
     func createRepository(_ request: GitCreateRepositoryRequest, context: GitProviderRequestContext) async throws -> GitRepository
     func forkRepository(_ reference: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitRepository
     func createPullRequest(_ request: GitPullRequestRequest, context: GitProviderRequestContext) async throws -> GitPullRequest
+    func findPullRequest(_ query: GitPullRequestQuery, context: GitProviderRequestContext) async throws -> GitPullRequest?
+}
+
+public extension GitProvider {
+    func findPullRequest(_ query: GitPullRequestQuery, context: GitProviderRequestContext) async throws -> GitPullRequest? {
+        throw GitPontError.unsupportedCapability("findPullRequest")
+    }
 }
 
 /// Per-request connection and credential context resolved by the facade.

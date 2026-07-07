@@ -8,7 +8,7 @@ The canonical API surface is defined in [Architecture](architecture.md); all mod
 
 ## Product Decisions
 
-- No Bitbucket in v1.
+- Bitbucket Cloud is included in v1. Bitbucket Server/Data Center is not included.
 - No SSH in the main integration model. Platform account connections over HTTPS are the default path.
 - Codeberg is a preset Forgejo instance, not a separate provider kind.
 - Apple/Swift is the only v1 implementation target.
@@ -32,7 +32,7 @@ The Swift library is ready for app integration when:
 - Public API is documented enough for Lezin and GitFolder to consume.
 - GitHub file read/write/delete, branch/repo/fork creation, and PR creation are implemented with mocked tests.
 - GitLab.com and self-hosted GitLab file read/write/delete, branch/repo/fork creation, and MR creation are implemented with mocked tests.
-- Codeberg/Forgejo/Gitea file read/write/delete, branch/repo/fork creation, and PR creation are implemented with mocked tests.
+- Codeberg/Forgejo/Gitea and Bitbucket Cloud file read/write/delete, branch/repo/fork creation, and PR creation are implemented with mocked tests.
 - `submitChange` works for direct commit, branch + PR, fork + PR, and automatic strategy selection on all providers.
 - Provider URL parsing is covered by a fixture matrix, including slashed-branch ambiguity and permalinks.
 - Pagination is followed on all list endpoints with the documented safety cap.
@@ -60,7 +60,7 @@ The repository is buildable now:
 Implemented in the current Swift package:
 
 - Core provider-neutral models, stores, facade, URL resolution helpers, and validation.
-- GitHub, GitLab, and Forgejo/Gitea provider operations for account, repositories, branches, file read/list/commit/delete, branch create/delete, repository create, fork, and PR/MR create.
+- GitHub, GitLab, Forgejo/Gitea, and Bitbucket Cloud provider operations for account, repositories, branches, file read/list/commit/delete, branch create/delete, repository create, fork, and PR/MR create.
 - `submitChange` orchestration for direct commit, branch + PR, fork + PR, and automatic selection.
 - Provider-neutral OAuth facade start/complete methods, backed by GitHub device flow, GitLab PKCE, and Forgejo/Gitea browser OAuth provider implementations.
 - Token refresh for expiring OAuth credentials, serialized per connection and persisted before provider/API or Git CLI credential use, with one reactive refresh-and-retry after an unexpected authentication failure.
@@ -71,7 +71,7 @@ Implemented in the current Swift package:
 
 Remaining before calling v1 complete:
 
-- A verified run of the opt-in live write tests against dedicated disposable GitHub, GitLab, and Forgejo/Gitea repositories.
+- A verified run of the opt-in live write tests against dedicated disposable GitHub, GitLab, Forgejo/Gitea, and Bitbucket Cloud repositories.
 
 ## Expected Repository Structure
 

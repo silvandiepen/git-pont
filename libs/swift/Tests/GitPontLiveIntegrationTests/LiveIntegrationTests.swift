@@ -1,4 +1,5 @@
 import Foundation
+import GitPontBitbucket
 import GitPontCore
 import GitPontForge
 import GitPontGitHub
@@ -41,6 +42,18 @@ struct LiveIntegrationTests {
 
         let provider = ForgeProvider(httpClient: URLSessionHTTPClient(), instances: [instance])
         let account = try await provider.account(instance: instance, credential: GitCredential(accessToken: token))
+
+        #expect(!account.id.isEmpty)
+        #expect(!account.login.isEmpty)
+    }
+
+    @Test func bitbucketAccountLoadsWhenTokenIsConfigured() async throws {
+        guard let token = environment("GITPONT_LIVE_BITBUCKET_TOKEN") else {
+            return
+        }
+
+        let provider = BitbucketProvider(httpClient: URLSessionHTTPClient())
+        let account = try await provider.account(instance: .bitbucketCloud, credential: GitCredential(accessToken: token))
 
         #expect(!account.id.isEmpty)
         #expect(!account.login.isEmpty)
@@ -92,6 +105,21 @@ struct LiveIntegrationTests {
             repository: repository,
             token: token,
             baseRef: environment("GITPONT_LIVE_FORGEJO_WRITE_BASE_REF") ?? repository.defaultBranch ?? "main"
+        )
+    }
+
+    @Test func bitbucketDisposableWriteCycleWhenConfigured() async throws {
+        guard let token = environment("GITPONT_LIVE_BITBUCKET_TOKEN"),
+              let repository = repositoryReference(from: environment("GITPONT_LIVE_BITBUCKET_WRITE_REPO"), instance: .bitbucketCloud)
+        else {
+            return
+        }
+
+        try await runDisposableWriteCycle(
+            provider: BitbucketProvider(httpClient: URLSessionHTTPClient()),
+            repository: repository,
+            token: token,
+            baseRef: environment("GITPONT_LIVE_BITBUCKET_WRITE_BASE_REF") ?? repository.defaultBranch ?? "main"
         )
     }
 

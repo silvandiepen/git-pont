@@ -13,6 +13,7 @@ public enum GitProviderKind: String, Hashable, Sendable, Codable {
     case gitLabSelfHosted
     case forgejo
     case gitea
+    case bitbucketCloud
 }
 ```
 
@@ -37,6 +38,7 @@ public extension GitProviderInstance {
     static let github: GitProviderInstance      // https://github.com / https://api.github.com
     static let gitLabCloud: GitProviderInstance // https://gitlab.com / https://gitlab.com/api/v4
     static let codeberg: GitProviderInstance    // kind .forgejo, https://codeberg.org / https://codeberg.org/api/v1
+    static let bitbucketCloud: GitProviderInstance // https://bitbucket.org / https://api.bitbucket.org/2.0
 
     static func gitLabSelfHosted(baseURL: URL, displayName: String?) -> GitProviderInstance
     static func forgejo(baseURL: URL, displayName: String?) -> GitProviderInstance

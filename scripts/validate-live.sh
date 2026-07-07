@@ -16,6 +16,8 @@ require_env GITPONT_LIVE_GITLAB_TOKEN
 require_env GITPONT_LIVE_GITLAB_WRITE_REPO
 require_env GITPONT_LIVE_FORGEJO_TOKEN
 require_env GITPONT_LIVE_FORGEJO_WRITE_REPO
+require_env GITPONT_LIVE_BITBUCKET_TOKEN
+require_env GITPONT_LIVE_BITBUCKET_WRITE_REPO
 
 if (( ${#missing[@]} > 0 )); then
   printf 'Missing required live validation environment variables:\n' >&2
@@ -24,6 +26,7 @@ if (( ${#missing[@]} > 0 )); then
   printf '  GITPONT_LIVE_GITHUB_WRITE_BASE_REF\n' >&2
   printf '  GITPONT_LIVE_GITLAB_WRITE_BASE_REF\n' >&2
   printf '  GITPONT_LIVE_FORGEJO_WRITE_BASE_REF\n' >&2
+  printf '  GITPONT_LIVE_BITBUCKET_WRITE_BASE_REF\n' >&2
   exit 2
 fi
 
