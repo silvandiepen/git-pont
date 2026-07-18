@@ -233,6 +233,7 @@ The site config is `docs/site/girk.json`. I could not verify a public Girk.dev s
 - [Authentication](docs/content/authentication.md)
 - [TypeScript Core Kit](docs/content/typescript-kit.md)
 - [Cloudflare Worker Service](docs/content/worker-service.md)
+- [TypeScript Implementation Guide](docs/content/typescript-implementation-guide.md)
 - [Provider APIs](docs/content/provider-apis.md)
 - [Security](docs/content/security.md)
 - [Git CLI Credentials](docs/content/git-cli-credentials.md)

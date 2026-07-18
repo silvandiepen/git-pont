@@ -64,7 +64,9 @@ retry policy, two-phase URL parsing, and the change-submission strategies
   repository, fork, and create pull request.
 - **GitLab / Forgejo-Gitea / Bitbucket** — scaffolded. They declare identity,
   capabilities, and host routing (`canHandle`) so the registry works, and throw
-  `unsupportedCapability` for operations until ported from the Swift kit.
+  `unsupportedCapability` for operations until ported from the Swift kit. See the
+  [TypeScript Implementation Guide](typescript-implementation-guide.md) for the
+  ordered port tasks, file targets, and acceptance criteria.
 
 ## Storage abstractions
 

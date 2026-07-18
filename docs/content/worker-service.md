@@ -79,6 +79,9 @@ CORS is locked to `ALLOWED_ORIGINS` with credentials enabled.
 
 ## Follow-ups
 
+Step-by-step tasks (files to touch, Swift references, acceptance criteria) are in
+the [TypeScript Implementation Guide](typescript-implementation-guide.md):
+
 - GitLab / Forgejo-Gitea / Bitbucket login and proxying (GitLab's ~2h tokens
   introduce a Durable-Object serialized refresh).
 - Write endpoints (`commit`, `pulls`, `submit`) once the app needs writes.
