@@ -1,0 +1,23 @@
+{
+  "name": "@git-pont/worker",
+  "version": "0.1.0",
+  "description": "Cloudflare Worker exposing git-pont: multi-platform OAuth, sessions, and a normalized REST proxy for web apps such as gitKanban.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@git-pont/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.78.0"
+  }
+}

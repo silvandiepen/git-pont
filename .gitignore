@@ -2,3 +2,7 @@ node_modules
 .build/
 .swiftpm/
 docs/site/dist/
+kits/*/dist/
+libs/typescript/dist/
+.dev.vars
+.wrangler/

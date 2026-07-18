@@ -2,22 +2,34 @@
 
 `git-pont` should be designed as a family of reusable platform libraries that share one provider-neutral contract. Kits are reserved for app/demo bundles or composed starter integrations.
 
-The first library is Swift-only:
+The first library is the Swift implementation:
 
 ```txt
 libs/swift
 ```
 
-`libs/swift` is implemented as a Swift Package for Apple platforms and is the only v1 implementation target. Lezin and GitFolder are the first consumers.
+`libs/swift` is implemented as a Swift Package for Apple platforms and was the first v1 implementation target. Lezin and GitFolder are the first consumers. A TypeScript library (`libs/typescript`) and Cloudflare Worker kit (`kits/worker`) now sit alongside it — see below.
 
 The repository root also contains a public `Package.swift` that points SwiftPM at the `libs/swift` source and test paths. External Swift projects should depend on the repository URL, not on a `libs/swift` subdirectory URL.
 
-Future libraries may be added without changing the shared product model:
+A TypeScript implementation now exists alongside the Swift library, following the
+same libs-vs-kits split — a reusable library plus a deployable service:
+
+```txt
+libs/typescript   @git-pont/core    TypeScript port of the contract (auth + REST proxy)
+kits/worker        @git-pont/worker  Cloudflare Worker consuming @git-pont/core
+```
+
+`libs/typescript` is a framework-agnostic library (fetch + WebCrypto only) that
+runs in Workers, Node, and browsers, mirroring `libs/swift`; `kits/worker` is a
+deployable app kit that adds OAuth callback handling, sessions, and persistence
+for web consumers such as gitKanban. See [TypeScript Core Kit](typescript-kit.md)
+and [Cloudflare Worker Service](worker-service.md).
+
+Further libraries may be added without changing the shared product model:
 
 ```txt
 libs/kotlin       Kotlin/Android
-libs/typescript   TypeScript/browser
-libs/server       TypeScript or another backend runtime
 ```
 
 These names are planning labels, not committed package names.

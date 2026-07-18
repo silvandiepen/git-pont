@@ -11,6 +11,8 @@
     "architecture.md",
     "provider-model.md",
     "authentication.md",
+    "typescript-kit.md",
+    "worker-service.md",
     "provider-apis.md",
     "security.md",
     "git-cli-credentials.md",
