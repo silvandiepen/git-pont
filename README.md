@@ -54,8 +54,8 @@ Do not add Android or web implementation work to v1. The v1 goal is to design th
 ```txt
 libs/
   swift/                 Reusable Swift Package for Apple platforms
+  typescript/            @git-pont/core — TypeScript port of the contract (auth + REST proxy)
 kits/
-  core/                  @git-pont/core — TypeScript port of the contract (auth + REST proxy)
   worker/                @git-pont/worker — Cloudflare Worker consuming @git-pont/core
 docs/
   content/               Portable Markdown documentation
@@ -64,10 +64,10 @@ scripts/
   validate-local.sh      Local validation entrypoint
 ```
 
-`kits/core` is a framework-agnostic TypeScript library (fetch + WebCrypto) that
-mirrors the Swift contract and runs in Workers, Node, and browsers. `kits/worker`
-is a deployable Cloudflare Worker that adds multi-platform OAuth, sessions, and
-persistence — the backend for web consumers such as gitKanban. See
+`libs/typescript` is a framework-agnostic TypeScript library (fetch + WebCrypto)
+that mirrors the Swift contract and runs in Workers, Node, and browsers.
+`kits/worker` is a deployable Cloudflare Worker that adds multi-platform OAuth,
+sessions, and persistence — the backend for web consumers such as gitKanban. See
 [TypeScript Core Kit](docs/content/typescript-kit.md) and
 [Cloudflare Worker Service](docs/content/worker-service.md).
 

@@ -1,7 +1,7 @@
 # TypeScript Core Kit
 
-`@git-pont/core` (`kits/core`) is a TypeScript port of the canonical git-pont
-contract. It is the **auth + REST proxy** layer: the same provider-neutral
+`@git-pont/core` (`libs/typescript`) is a TypeScript port of the canonical
+git-pont contract. It is the **auth + REST proxy** layer: the same provider-neutral
 concepts as the Swift library — connection, repository, branch, file reference,
 commit, pull request — expressed as TypeScript types and a `GitPont` facade.
 

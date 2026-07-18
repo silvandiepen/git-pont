@@ -4,7 +4,7 @@
   "type": "module",
   "workspaces": [
     "docs/site",
-    "kits/core",
+    "libs/typescript",
     "kits/worker"
   ],
   "scripts": {

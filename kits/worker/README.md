@@ -1,6 +1,6 @@
 # @git-pont/worker
 
-A Cloudflare Worker that turns [`@git-pont/core`](../core) into a hosted
+A Cloudflare Worker that turns [`@git-pont/core`](../../libs/typescript) into a hosted
 service: multi-platform OAuth handled server-side, connections persisted so
 returning users don't reconnect, and a normalized REST API a web app can call.
 
