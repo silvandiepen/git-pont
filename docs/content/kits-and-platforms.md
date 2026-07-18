@@ -12,12 +12,24 @@ libs/swift
 
 The repository root also contains a public `Package.swift` that points SwiftPM at the `libs/swift` source and test paths. External Swift projects should depend on the repository URL, not on a `libs/swift` subdirectory URL.
 
-Future libraries may be added without changing the shared product model:
+A TypeScript implementation now exists alongside the Swift library, delivered as
+two kits:
+
+```txt
+kits/core     @git-pont/core   TypeScript port of the contract (auth + REST proxy)
+kits/worker   @git-pont/worker Cloudflare Worker consuming @git-pont/core
+```
+
+`kits/core` is a framework-agnostic library (fetch + WebCrypto only) that runs in
+Workers, Node, and browsers; `kits/worker` is a deployable service that adds
+OAuth callback handling, sessions, and persistence for web consumers such as
+gitKanban. See [TypeScript Core Kit](typescript-kit.md) and
+[Cloudflare Worker Service](worker-service.md).
+
+Further libraries may be added without changing the shared product model:
 
 ```txt
 libs/kotlin       Kotlin/Android
-libs/typescript   TypeScript/browser
-libs/server       TypeScript or another backend runtime
 ```
 
 These names are planning labels, not committed package names.

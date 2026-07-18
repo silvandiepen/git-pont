@@ -1,0 +1,9 @@
+# Copy to `.dev.vars` for `wrangler dev`. Do NOT commit `.dev.vars`.
+# In production set these with `wrangler secret put <NAME>`.
+
+GITHUB_CLIENT_ID = "your-github-oauth-app-client-id"
+GITHUB_CLIENT_SECRET = "your-github-oauth-app-client-secret"
+
+# base64-encoded 32 random bytes, e.g.:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+GITPONT_ENC_KEY = "base64-encoded-32-byte-key"

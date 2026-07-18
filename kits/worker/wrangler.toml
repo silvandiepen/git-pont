@@ -1,0 +1,46 @@
+name = "git-pont-worker"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# ---------------------------------------------------------------------------
+# Public (non-secret) configuration. Override per environment as needed.
+# ---------------------------------------------------------------------------
+[vars]
+# Comma-separated list of origins allowed to call the worker with credentials.
+ALLOWED_ORIGINS = "http://localhost:5173"
+# Where the worker redirects the browser back to after a successful login.
+APP_LOGIN_REDIRECT = "http://localhost:5173"
+# Public base URL of this worker, used to build OAuth redirect URIs.
+OAUTH_REDIRECT_BASE = "http://localhost:8787"
+# GitHub OAuth scopes requested at login.
+GITHUB_SCOPES = "repo,read:user"
+# Session lifetime in seconds (default 30 days).
+SESSION_TTL_SECONDS = "2592000"
+
+# ---------------------------------------------------------------------------
+# KV namespaces. Create with:
+#   wrangler kv:namespace create SESSIONS
+#   wrangler kv:namespace create CONNECTIONS
+#   wrangler kv:namespace create PROFILES
+# then paste the returned ids below.
+# ---------------------------------------------------------------------------
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "REPLACE_WITH_SESSIONS_KV_ID"
+
+[[kv_namespaces]]
+binding = "CONNECTIONS"
+id = "REPLACE_WITH_CONNECTIONS_KV_ID"
+
+[[kv_namespaces]]
+binding = "PROFILES"
+id = "REPLACE_WITH_PROFILES_KV_ID"
+
+# ---------------------------------------------------------------------------
+# Secrets — set with `wrangler secret put <NAME>` (never commit these):
+#   GITHUB_CLIENT_ID
+#   GITHUB_CLIENT_SECRET
+#   GITPONT_ENC_KEY       # base64-encoded 32-byte key for AES-GCM token encryption
+# For local dev, put them in .dev.vars (see .dev.vars.example).
+# ---------------------------------------------------------------------------

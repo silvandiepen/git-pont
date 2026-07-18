@@ -55,13 +55,21 @@ Do not add Android or web implementation work to v1. The v1 goal is to design th
 libs/
   swift/                 Reusable Swift Package for Apple platforms
 kits/
-  # reserved for app/demo kits if needed later
+  core/                  @git-pont/core — TypeScript port of the contract (auth + REST proxy)
+  worker/                @git-pont/worker — Cloudflare Worker consuming @git-pont/core
 docs/
   content/               Portable Markdown documentation
   site/                  Static docs site builder and Girk-compatible config
 scripts/
   validate-local.sh      Local validation entrypoint
 ```
+
+`kits/core` is a framework-agnostic TypeScript library (fetch + WebCrypto) that
+mirrors the Swift contract and runs in Workers, Node, and browsers. `kits/worker`
+is a deployable Cloudflare Worker that adds multi-platform OAuth, sessions, and
+persistence — the backend for web consumers such as gitKanban. See
+[TypeScript Core Kit](docs/content/typescript-kit.md) and
+[Cloudflare Worker Service](docs/content/worker-service.md).
 
 Root commands:
 
@@ -70,6 +78,12 @@ npm run swift:build
 npm run swift:test
 npm run docs:build
 npm run validate
+
+npm run ts:build          # build @git-pont/core
+npm run ts:test           # test @git-pont/core
+npm run worker:typecheck  # typecheck @git-pont/worker
+npm run worker:dev        # run the worker locally (wrangler dev)
+npm run worker:deploy     # deploy the worker (wrangler deploy)
 ```
 
 The Swift library can also be built directly:
@@ -217,6 +231,8 @@ The site config is `docs/site/girk.json`. I could not verify a public Girk.dev s
 - [Architecture](docs/content/architecture.md)
 - [Provider Model](docs/content/provider-model.md)
 - [Authentication](docs/content/authentication.md)
+- [TypeScript Core Kit](docs/content/typescript-kit.md)
+- [Cloudflare Worker Service](docs/content/worker-service.md)
 - [Provider APIs](docs/content/provider-apis.md)
 - [Security](docs/content/security.md)
 - [Git CLI Credentials](docs/content/git-cli-credentials.md)
