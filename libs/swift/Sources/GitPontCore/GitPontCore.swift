@@ -82,6 +82,20 @@ public final class GitPont: Sendable {
         }
     }
 
+    /// File name → text for the text files directly in a directory, in one round trip.
+    ///
+    /// Throws `unsupportedCapability` for a provider without `.directoryTextRead`.
+    public func readTextFiles(inDirectory reference: GitFileReference) async throws -> [String: String] {
+        let provider = try provider(for: reference.repository.instance)
+        guard provider.capabilities.contains(.directoryTextRead) else {
+            throw GitPontError.unsupportedCapability("readTextFiles")
+        }
+        let context = try await optionalContext(for: reference.repository.instance)
+        return try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.readTextFiles(inDirectory: reference, context: $0)
+        }
+    }
+
     public func listDirectory(_ reference: GitFileReference) async throws -> GitList<GitDirectoryEntry> {
         let provider = try provider(for: reference.repository.instance)
         let context = try await optionalContext(for: reference.repository.instance)
@@ -97,6 +111,22 @@ public final class GitPont: Sendable {
         try await ensureSafeNonBlindWrite(change, provider: provider, context: context, repository: change.reference.repository, ref: change.targetBranch)
         return try await retryingAuthentication(provider: provider, context: context) {
             try await provider.commitFile(change, context: $0)
+        }
+    }
+
+    /// Write and delete several files as one commit on a branch.
+    ///
+    /// Throws `unsupportedCapability` for a provider without `.batchCommit`; the caller
+    /// can then fall back to one `commitFile` per file.
+    public func commitFiles(_ commit: GitMultiFileCommit) async throws -> GitCommitResult {
+        try GitPontValidator.validate(commit: commit)
+        let provider = try provider(for: commit.repository.instance)
+        guard provider.capabilities.contains(.batchCommit) else {
+            throw GitPontError.unsupportedCapability("commitFiles")
+        }
+        let context = try await requiredContext(for: commit.repository.instance)
+        return try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.commitFiles(commit, context: $0)
         }
     }
 

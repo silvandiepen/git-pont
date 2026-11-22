@@ -132,6 +132,34 @@ struct BitbucketProviderTests {
         #expect(request?.url.absoluteString == "https://api.bitbucket.org/2.0/repositories/workspace/repo/pullrequests")
         #expect(request?.bodyString.contains("\"title\":\"Update\"") == true)
     }
+
+    @Test func commitFilesPostsEveryFileInOneForm() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 201, body: Data(#"{"hash":"new-commit"}"#.utf8))
+        ])
+        let provider = BitbucketProvider(httpClient: client)
+
+        let result = try await provider.commitFiles(
+            GitMultiFileCommit(repository: repositoryReference, branch: "main", message: "Change three files", operations: [
+                .write("docs/a.md", Data("hello".utf8)),
+                .write("docs/new.md", Data("world".utf8)),
+                .delete("docs/old.md")
+            ]),
+            context: authenticatedContext
+        )
+
+        #expect(result.commitSHA == "new-commit")
+        let requests = await client.requests
+        #expect(requests.count == 1)
+        #expect(requests[0].method == "POST")
+        #expect(requests[0].url.absoluteString.hasSuffix("/repositories/workspace/repo/src"))
+        let body = String(decoding: requests[0].body ?? Data(), as: UTF8.self)
+        #expect(body.contains("name=\"message\"\r\n\r\nChange three files"))
+        #expect(body.contains("name=\"docs/a.md\""))
+        #expect(body.contains("name=\"docs/new.md\""))
+        #expect(body.contains("name=\"files\"\r\n\r\ndocs/old.md"))
+    }
+
 }
 
 private let repositoryReference = GitRepositoryReference(instance: .bitbucketCloud, namespace: "workspace", name: "repo")

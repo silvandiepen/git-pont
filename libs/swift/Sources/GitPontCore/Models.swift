@@ -326,6 +326,49 @@ public struct GitFileChange: Sendable {
     }
 }
 
+/// One file in a multi-file commit: new content for a path, or its removal.
+public struct GitFileOperation: Hashable, Sendable {
+    public var path: String
+    /// The file's new content; `nil` deletes the file.
+    public var content: Data?
+
+    public init(path: String, content: Data?) {
+        self.path = path
+        self.content = content
+    }
+
+    public static func write(_ path: String, _ content: Data) -> GitFileOperation {
+        GitFileOperation(path: path, content: content)
+    }
+
+    public static func delete(_ path: String) -> GitFileOperation {
+        GitFileOperation(path: path, content: nil)
+    }
+}
+
+/// Several file changes that land on a branch as a single commit.
+///
+/// The files are written as given (the last writer wins per file), but the commit is
+/// built on the branch's current head and never forced: a provider that sees the branch
+/// move underneath it reports a conflict and nothing is written.
+public struct GitMultiFileCommit: Sendable {
+    public var repository: GitRepositoryReference
+    public var branch: String
+    public var message: String
+    public var operations: [GitFileOperation]
+    public var authorName: String?
+    public var authorEmail: String?
+
+    public init(repository: GitRepositoryReference, branch: String, message: String, operations: [GitFileOperation], authorName: String? = nil, authorEmail: String? = nil) {
+        self.repository = repository
+        self.branch = branch
+        self.message = message
+        self.operations = operations
+        self.authorName = authorName
+        self.authorEmail = authorEmail
+    }
+}
+
 /// Request to delete a repository file.
 public struct GitFileDeleteRequest: Sendable {
     public var reference: GitFileReference

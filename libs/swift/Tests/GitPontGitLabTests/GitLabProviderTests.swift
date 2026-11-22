@@ -523,6 +523,38 @@ struct GitLabProviderTests {
         #expect(result.newVersion == .commitID("fresh-commit"))
         #expect(await client.requests.first?.headers["PRIVATE-TOKEN"] == "secret-token")
     }
+
+    @Test func commitFilesSendsOneCommitWithAnActionPerFile() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"[{"name":"a.md","path":"docs/a.md","type":"blob"},{"name":"old.md","path":"docs/old.md","type":"blob"}]"#.utf8)),
+            HTTPResponse(statusCode: 201, body: Data(#"{"id":"new-commit","web_url":"https://gitlab.com/group/project/-/commit/new-commit"}"#.utf8))
+        ])
+        let provider = GitLabProvider(httpClient: client)
+
+        let result = try await provider.commitFiles(
+            GitMultiFileCommit(repository: repositoryReference, branch: "main", message: "Change four files", operations: [
+                .write("docs/a.md", Data("hello".utf8)),
+                .write("docs/new.md", Data("hello".utf8)),
+                .delete("docs/old.md"),
+                .delete("docs/never-existed.md")
+            ]),
+            context: authenticatedContext
+        )
+
+        #expect(result.commitSHA == "new-commit")
+        let requests = await client.requests
+        #expect(requests.count == 2)
+        #expect(requests[0].url.absoluteString == "https://gitlab.com/api/v4/projects/group%2Fproject/repository/tree?path=docs&ref=main&per_page=100")
+        #expect(requests[1].method == "POST")
+        #expect(requests[1].url.absoluteString == "https://gitlab.com/api/v4/projects/group%2Fproject/repository/commits")
+        let body = String(decoding: requests[1].body ?? Data(), as: UTF8.self)
+        #expect(body.contains(#""commit_message":"Change four files""#))
+        #expect(body.contains(#"{"action":"update","content":"aGVsbG8=","encoding":"base64","file_path":"docs\/a.md"}"#))
+        #expect(body.contains(#"{"action":"create","content":"aGVsbG8=","encoding":"base64","file_path":"docs\/new.md"}"#))
+        #expect(body.contains(#"{"action":"delete","file_path":"docs\/old.md"}"#))
+        #expect(!body.contains("never-existed"))
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {
