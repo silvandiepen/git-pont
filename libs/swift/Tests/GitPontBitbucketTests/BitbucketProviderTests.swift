@@ -178,6 +178,13 @@ struct BitbucketProviderTests {
         #expect(body.contains(#""description":"Live updates""#))
     }
 
+
+    @Test func webURLPointsAtTheFilePage() {
+        let provider = BitbucketProvider(httpClient: RecordingHTTPClient(responses: []))
+        let url = provider.webURL(for: GitFileReference(repository: repositoryReference, path: "docs/plan.md", ref: "main"))
+        #expect(url?.absoluteString == "https://bitbucket.org/workspace/repo/src/main/docs/plan.md")
+    }
+
 }
 
 private let repositoryReference = GitRepositoryReference(instance: .bitbucketCloud, namespace: "workspace", name: "repo")

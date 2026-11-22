@@ -42,6 +42,9 @@ public protocol GitProvider: Sendable {
     var changeRequestTerm: GitChangeRequestTerm { get }
 
     func canHandle(url: URL) -> Bool
+    /// The page that shows a file (or, for an empty path, the repository at that ref) in
+    /// the provider's web interface: the link a person opens in a browser.
+    func webURL(for reference: GitFileReference) -> URL?
     func parse(url: URL) throws -> GitURLParseResult
     func account(instance: GitProviderInstance, credential: GitCredential) async throws -> GitAccount
     func repositories(context: GitProviderRequestContext) async throws -> GitList<GitRepository>
@@ -70,6 +73,8 @@ public protocol GitProvider: Sendable {
 }
 
 public extension GitProvider {
+    func webURL(for reference: GitFileReference) -> URL? { nil }
+
     func listTree(_ reference: GitFileReference, context: GitProviderRequestContext) async throws -> GitList<GitDirectoryEntry> {
         throw GitPontError.unsupportedCapability("listTree")
     }

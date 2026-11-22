@@ -550,6 +550,13 @@ struct ForgeProviderTests {
         #expect(body.contains(#""secret":"s3cret""#))
     }
 
+
+    @Test func webURLPointsAtTheFilePage() {
+        let provider = ForgeProvider(httpClient: RecordingHTTPClient(responses: []))
+        let url = provider.webURL(for: GitFileReference(repository: repositoryReference, path: "docs/plan.md", ref: "main"))
+        #expect(url?.absoluteString == "https://codeberg.org/owner/repo/src/branch/main/docs/plan.md")
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {

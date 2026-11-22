@@ -601,6 +601,13 @@ struct GitLabProviderTests {
         #expect(await client.requests.first?.url.absoluteString == "https://gitlab.com/api/v4/projects/group%2Fproject/repository/tree?path=docs&ref=main&recursive=true&per_page=100")
     }
 
+
+    @Test func webURLPointsAtTheFilePage() {
+        let provider = GitLabProvider(httpClient: RecordingHTTPClient(responses: []))
+        let url = provider.webURL(for: GitFileReference(repository: repositoryReference, path: "docs/plan.md", ref: "main"))
+        #expect(url?.absoluteString == "https://gitlab.com/group/project/-/blob/main/docs/plan.md")
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {
