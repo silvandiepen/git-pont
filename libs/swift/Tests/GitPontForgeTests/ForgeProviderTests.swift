@@ -501,6 +501,35 @@ struct ForgeProviderTests {
         #expect(result.commitSHA == "commit-sha")
         #expect(await client.requests.first?.headers["Authorization"] == "token secret-token")
     }
+
+    @Test func commitFilesSendsOneChangeFilesRequest() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"[{"type":"file","name":"a.md","path":"docs/a.md","sha":"blob-a"},{"type":"file","name":"old.md","path":"docs/old.md","sha":"blob-old"}]"#.utf8)),
+            HTTPResponse(statusCode: 201, body: Data(#"{"commit":{"sha":"new-commit","html_url":"https://codeberg.org/owner/repo/commit/new-commit"},"files":[]}"#.utf8))
+        ])
+        let provider = ForgeProvider(httpClient: client)
+
+        let result = try await provider.commitFiles(
+            GitMultiFileCommit(repository: repositoryReference, branch: "main", message: "Change three files", operations: [
+                .write("docs/a.md", Data("hello".utf8)),
+                .write("docs/new.md", Data("hello".utf8)),
+                .delete("docs/old.md")
+            ]),
+            context: authenticatedContext
+        )
+
+        #expect(result.commitSHA == "new-commit")
+        let requests = await client.requests
+        #expect(requests.count == 2)
+        #expect(requests[0].url.absoluteString == "https://codeberg.org/api/v1/repos/owner/repo/contents/docs?ref=main")
+        #expect(requests[1].method == "POST")
+        #expect(requests[1].url.absoluteString == "https://codeberg.org/api/v1/repos/owner/repo/contents")
+        let body = String(decoding: requests[1].body ?? Data(), as: UTF8.self)
+        #expect(body.contains(#"{"content":"aGVsbG8=","operation":"update","path":"docs\/a.md","sha":"blob-a"}"#))
+        #expect(body.contains(#"{"content":"aGVsbG8=","operation":"create","path":"docs\/new.md"}"#))
+        #expect(body.contains(#"{"operation":"delete","path":"docs\/old.md","sha":"blob-old"}"#))
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {

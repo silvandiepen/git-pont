@@ -7,6 +7,20 @@ public enum GitPontValidator {
         try validateCommitMessage(change.message)
     }
 
+    public static func validate(commit: GitMultiFileCommit) throws {
+        try validateCommitMessage(commit.message)
+        if commit.operations.isEmpty {
+            throw GitPontError.unsupportedURL("A commit needs at least one file")
+        }
+        var seen = Set<String>()
+        for operation in commit.operations {
+            try validateRepositoryPath(operation.path)
+            if !seen.insert(operation.path).inserted {
+                throw GitPontError.unsupportedURL("A commit can change a path only once: \(operation.path)")
+            }
+        }
+    }
+
     public static func validate(delete request: GitFileDeleteRequest) throws {
         try validateRepositoryPath(request.reference.path)
         try validateCommitMessage(request.message)

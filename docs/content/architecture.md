@@ -40,6 +40,8 @@ public final class GitPont: Sendable {
     public func listDirectory(_ reference: GitFileReference) async throws -> GitList<GitDirectoryEntry>
     public func commitFile(_ change: GitFileChange) async throws -> GitCommitResult
     public func deleteFile(_ request: GitFileDeleteRequest) async throws -> GitCommitResult
+    public func commitFiles(_ commit: GitMultiFileCommit) async throws -> GitCommitResult
+    public func readTextFiles(inDirectory reference: GitFileReference) async throws -> [String: String]
     public func checkForRemoteChange(_ file: GitRemoteFile) async throws -> Bool
 
     // Repositories and branches
@@ -114,6 +116,8 @@ public protocol GitProvider: Sendable {
     func listDirectory(_ reference: GitFileReference, context: GitProviderRequestContext) async throws -> GitList<GitDirectoryEntry>
     func commitFile(_ change: GitFileChange, context: GitProviderRequestContext) async throws -> GitCommitResult
     func deleteFile(_ request: GitFileDeleteRequest, context: GitProviderRequestContext) async throws -> GitCommitResult
+    func commitFiles(_ commit: GitMultiFileCommit, context: GitProviderRequestContext) async throws -> GitCommitResult
+    func readTextFiles(inDirectory reference: GitFileReference, context: GitProviderRequestContext) async throws -> [String: String]
     func createBranch(_ request: GitCreateBranchRequest, context: GitProviderRequestContext) async throws -> GitBranch
     func deleteBranch(_ request: GitDeleteBranchRequest, context: GitProviderRequestContext) async throws
     func createRepository(_ request: GitCreateRepositoryRequest, context: GitProviderRequestContext) async throws -> GitRepository
@@ -312,6 +316,8 @@ public struct GitProviderCapabilities: OptionSet, Sendable {
     public static let repositoryFork
     public static let pullRequestCreate
     public static let gitCLICredentials
+    public static let branchDelete
+    public static let directoryTextRead
 }
 ```
 
@@ -324,7 +330,26 @@ public enum GitChangeRequestTerm: String, Sendable, Codable {
 }
 ```
 
-`batchCommit` (multiple files in one commit) is a declared capability but has no v1 API surface; do not build it until a consumer needs it.
+### Several files in one commit (`batchCommit`)
+
+`commitFiles` writes and deletes any number of files as a single commit on a branch. An app says what should change; each provider decides which calls that takes:
+
+| Provider | How |
+|---|---|
+| GitHub | Git data API: a tree on top of the branch head, a commit for it, then a fast-forward of the branch. Binary content goes up as a blob first. |
+| GitLab | One call to the commits API with an action per file. The folders involved are listed first, because GitLab must be told whether a write creates or updates. |
+| Forgejo / Gitea (1.20+) / Codeberg | One call to the "change files" endpoint. The folders involved are listed first, because an update or delete must name the blob it replaces. |
+| Bitbucket | One multipart post to `src`: a part per written file, a `files` field per deleted one. |
+
+The files are written as given (last writer wins per file), but the commit is never forced: when the branch moves underneath it, the provider reports a conflict and nothing is written. Deleting a path that does not exist is skipped. A path may appear only once per commit.
+
+### A directory's text files in one request (`directoryTextRead`)
+
+`readTextFiles(inDirectory:)` returns file name → text for the text files directly in a directory. GitHub answers it with one GraphQL request; a folder of a hundred files is otherwise a hundred requests. Binary files and files the provider cuts off are left out and are read with `readFile`. Providers without the capability throw `unsupportedCapability`, and the caller reads file by file.
+
+### Large files
+
+`readFile` on GitHub falls back to the raw media type for files the JSON contents answer does not inline (over 1 MB, up to 100 MB), so callers get the bytes either way.
 
 ## Change Submission
 

@@ -560,6 +560,122 @@ struct GitHubProviderTests {
         #expect(fork.reference.namespace == "octocat")
         #expect(await client.requests.count == 1)
     }
+
+    @Test func commitFilesBuildsOneCommitOnTheBranchHead() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"{"ref":"refs/heads/main","object":{"sha":"head-sha"}}"#.utf8)),
+            HTTPResponse(statusCode: 200, body: Data(#"{"sha":"head-sha","tree":{"sha":"base-tree"}}"#.utf8)),
+            HTTPResponse(statusCode: 201, body: Data(#"{"sha":"blob-sha"}"#.utf8)),
+            HTTPResponse(statusCode: 201, body: Data(#"{"sha":"new-tree"}"#.utf8)),
+            HTTPResponse(statusCode: 201, body: Data(#"{"sha":"new-commit","tree":{"sha":"new-tree"},"html_url":"https://github.com/owner/repo/commit/new-commit"}"#.utf8)),
+            HTTPResponse(statusCode: 200, body: Data(#"{"ref":"refs/heads/main","object":{"sha":"new-commit"}}"#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        let result = try await provider.commitFiles(
+            GitMultiFileCommit(repository: repositoryReference, branch: "main", message: "Change three files", operations: [
+                .write("docs/a.md", Data("hello".utf8)),
+                .write("img/pixel.bin", Data([0xFF, 0xFE, 0x00])),
+                .delete("old.md")
+            ]),
+            context: authenticatedContext
+        )
+
+        #expect(result.commitSHA == "new-commit")
+        #expect(result.webURL?.absoluteString == "https://github.com/owner/repo/commit/new-commit")
+        let requests = await client.requests
+        #expect(requests.map(\.method) == ["GET", "GET", "POST", "POST", "POST", "PATCH"])
+        #expect(requests[0].url.absoluteString == "https://api.github.com/repos/owner/repo/git/ref/heads/main")
+        #expect(requests[1].url.absoluteString == "https://api.github.com/repos/owner/repo/git/commits/head-sha")
+        #expect(requests[2].url.absoluteString == "https://api.github.com/repos/owner/repo/git/blobs")
+        #expect(requests[2].bodyString.contains(#""encoding":"base64""#))
+        let tree = requests[3].bodyString
+        #expect(tree.contains(#""base_tree":"base-tree""#))
+        #expect(tree.contains(#""content":"hello""#))
+        #expect(tree.contains(#""sha":"blob-sha""#))
+        #expect(tree.contains(#""sha":null"#))
+        #expect(requests[4].bodyString.contains(#""parents":["head-sha"]"#))
+        #expect(requests[4].bodyString.contains(#""tree":"new-tree""#))
+        #expect(requests[5].url.absoluteString == "https://api.github.com/repos/owner/repo/git/refs/heads/main")
+        #expect(requests[5].bodyString.contains(#""force":false"#))
+        #expect(requests[5].bodyString.contains(#""sha":"new-commit""#))
+    }
+
+    @Test func commitFilesReportsAConflictWhenTheBranchMoved() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"{"ref":"refs/heads/main","object":{"sha":"head-sha"}}"#.utf8)),
+            HTTPResponse(statusCode: 200, body: Data(#"{"sha":"head-sha","tree":{"sha":"base-tree"}}"#.utf8)),
+            HTTPResponse(statusCode: 201, body: Data(#"{"sha":"new-tree"}"#.utf8)),
+            HTTPResponse(statusCode: 201, body: Data(#"{"sha":"new-commit","tree":{"sha":"new-tree"}}"#.utf8)),
+            HTTPResponse(statusCode: 422, body: Data(#"{"message":"Update is not a fast forward"}"#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        do {
+            _ = try await provider.commitFiles(
+                GitMultiFileCommit(repository: repositoryReference, branch: "main", message: "Change", operations: [.write("a.md", Data("a".utf8))]),
+                context: authenticatedContext
+            )
+            Issue.record("Expected a conflict")
+        } catch GitPontError.conflict {
+        }
+    }
+
+    @Test func commitFilesRejectsTheSamePathTwice() async throws {
+        let provider = GitHubProvider(httpClient: MockHTTPClient())
+        await #expect(throws: GitPontError.self) {
+            _ = try await provider.commitFiles(
+                GitMultiFileCommit(repository: repositoryReference, branch: "main", message: "Change", operations: [.write("a.md", Data()), .delete("a.md")]),
+                context: authenticatedContext
+            )
+        }
+    }
+
+
+    @Test func readFileOverOneMegabyteComesThroughTheRawMediaType() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"{"type":"file","name":"big.png","path":"big.png","sha":"blob-sha","size":2000000,"encoding":"none","content":""}"#.utf8)),
+            HTTPResponse(statusCode: 200, body: Data([0x89, 0x50, 0x4E, 0x47]))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        let file = try await provider.readFile(fileReference(path: "big.png"), context: authenticatedContext)
+
+        #expect(file.content == Data([0x89, 0x50, 0x4E, 0x47]))
+        #expect(file.version == .blobSHA("blob-sha"))
+        let requests = await client.requests
+        #expect(requests.count == 2)
+        #expect(requests[1].headers["Accept"] == "application/vnd.github.raw+json")
+        #expect(requests[1].url.absoluteString == "https://api.github.com/repos/owner/repo/contents/big.png?ref=main")
+    }
+
+    @Test func readTextFilesReturnsTheTextBlobsOfADirectory() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"{"data":{"repository":{"object":{"entries":[{"name":"a.md","type":"blob","object":{"text":"A","isTruncated":false}},{"name":"cut.md","type":"blob","object":{"text":"par","isTruncated":true}},{"name":"pic.png","type":"blob","object":{"text":null,"isTruncated":false}},{"name":"sub","type":"tree","object":{}}]}}}}"#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        let texts = try await provider.readTextFiles(inDirectory: fileReference(path: "docs"), context: authenticatedContext)
+
+        #expect(texts == ["a.md": "A"])
+        let request = await client.requests.first
+        #expect(request?.url.absoluteString == "https://api.github.com/graphql")
+        #expect(request?.bodyString.contains(#""expression":"main:docs""#) == true)
+    }
+
+    @Test func readTextFilesOfAMissingDirectoryIsNotFound() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"{"data":{"repository":{"object":null}}}"#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        do {
+            _ = try await provider.readTextFiles(inDirectory: fileReference(path: "nope"), context: authenticatedContext)
+            Issue.record("Expected notFound")
+        } catch GitPontError.notFound {
+        }
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {

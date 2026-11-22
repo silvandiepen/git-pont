@@ -21,6 +21,10 @@ The library is content-agnostic. Lezin may use it for Markdown documents, but `g
 - Provide Git CLI credentials for apps that shell out to `git`, such as GitFolder.
 - Support self-hosted instances where the provider API is compatible.
 
+## The Gateway Rule
+
+Apps built on `git-pont` do not talk to a Git host themselves. An app says what it wants (commit these files, read this folder, open a pull request) and `git-pont` decides which calls that takes on each host. When an app needs something the library cannot do yet, the feature is added here, for every provider that can support it, and exposed behind a capability flag. It is not worked around with a direct provider call in the app. That is what makes a new provider here work in every app without changes there.
+
 ## Non-Goals
 
 - Do not become a full Git client.

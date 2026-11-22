@@ -20,6 +20,8 @@ public struct GitProviderCapabilities: OptionSet, Sendable {
     public static let pullRequestCreate = GitProviderCapabilities(rawValue: 1 << 9)
     public static let gitCLICredentials = GitProviderCapabilities(rawValue: 1 << 10)
     public static let branchDelete = GitProviderCapabilities(rawValue: 1 << 11)
+    /// Every text file of a directory in one request (`readTextFiles`).
+    public static let directoryTextRead = GitProviderCapabilities(rawValue: 1 << 12)
 }
 
 /// Provider-specific wording for change request objects.
@@ -43,8 +45,13 @@ public protocol GitProvider: Sendable {
     func branches(repository: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitList<GitBranch>
     func readFile(_ reference: GitFileReference, context: GitProviderRequestContext) async throws -> GitRemoteFile
     func listDirectory(_ reference: GitFileReference, context: GitProviderRequestContext) async throws -> GitList<GitDirectoryEntry>
+    /// File name → text for the text files directly in a directory, in one round trip.
+    /// Binary files and files the provider cuts off are left out; read those with `readFile`.
+    func readTextFiles(inDirectory reference: GitFileReference, context: GitProviderRequestContext) async throws -> [String: String]
     func commitFile(_ change: GitFileChange, context: GitProviderRequestContext) async throws -> GitCommitResult
     func deleteFile(_ request: GitFileDeleteRequest, context: GitProviderRequestContext) async throws -> GitCommitResult
+    /// Write and delete several files in one commit. Providers that can advertise `.batchCommit`.
+    func commitFiles(_ commit: GitMultiFileCommit, context: GitProviderRequestContext) async throws -> GitCommitResult
     func createBranch(_ request: GitCreateBranchRequest, context: GitProviderRequestContext) async throws -> GitBranch
     func deleteBranch(_ request: GitDeleteBranchRequest, context: GitProviderRequestContext) async throws
     func createRepository(_ request: GitCreateRepositoryRequest, context: GitProviderRequestContext) async throws -> GitRepository
@@ -54,6 +61,14 @@ public protocol GitProvider: Sendable {
 }
 
 public extension GitProvider {
+    func readTextFiles(inDirectory reference: GitFileReference, context: GitProviderRequestContext) async throws -> [String: String] {
+        throw GitPontError.unsupportedCapability("readTextFiles")
+    }
+
+    func commitFiles(_ commit: GitMultiFileCommit, context: GitProviderRequestContext) async throws -> GitCommitResult {
+        throw GitPontError.unsupportedCapability("commitFiles")
+    }
+
     func findPullRequest(_ query: GitPullRequestQuery, context: GitProviderRequestContext) async throws -> GitPullRequest? {
         throw GitPontError.unsupportedCapability("findPullRequest")
     }

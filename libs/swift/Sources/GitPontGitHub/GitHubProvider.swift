@@ -10,6 +10,8 @@ public struct GitHubProvider: GitProvider, GitAuthenticationProvider {
         .authenticatedFileRead,
         .fileCommit,
         .fileDelete,
+        .batchCommit,
+        .directoryTextRead,
         .directoryList,
         .branchCreate,
         .repositoryCreate,
@@ -192,12 +194,26 @@ public struct GitHubProvider: GitProvider, GitAuthenticationProvider {
         if let size = dto.size, size > 100_000_000 {
             throw GitPontError.fileTooLarge(size: size, limit: 100_000_000)
         }
-        guard dto.encoding == "base64", let content = dto.content else {
-            throw GitPontError.fileTooLarge(size: dto.size, limit: 100_000_000)
-        }
-        let normalizedContent = content.replacingOccurrences(of: "\n", with: "")
-        guard let data = Data(base64Encoded: normalizedContent) else {
-            throw GitPontError.invalidProviderResponse("GitHub returned invalid Base64 content")
+        let data: Data
+        if dto.encoding == "base64", let content = dto.content, !(content.isEmpty && (dto.size ?? 0) > 0) {
+            guard let decoded = Data(base64Encoded: content.replacingOccurrences(of: "\n", with: "")) else {
+                throw GitPontError.invalidProviderResponse("GitHub returned invalid Base64 content")
+            }
+            data = decoded
+        } else {
+            // The JSON answer only inlines files up to 1 MB. Bigger ones (up to 100 MB)
+            // come through the raw media type.
+            var rawHeaders = try headers(for: context)
+            rawHeaders["Accept"] = "application/vnd.github.raw+json"
+            let response = try await httpClient.send(HTTPRequest(
+                method: "GET",
+                url: contentsURL(for: reference.repository, path: reference.path).gitPontAppendingQuery([
+                    URLQueryItem(name: "ref", value: reference.ref)
+                ]),
+                headers: rawHeaders
+            ))
+            try validate(response)
+            data = response.body
         }
         return GitRemoteFile(
             reference: reference,
@@ -984,4 +1000,146 @@ private extension HTTPResponse {
         }
         return nil
     }
+}
+
+// MARK: - Several files in one commit
+
+extension GitHubProvider {
+    /// Builds the commit through the git data API: a tree on top of the branch head, a
+    /// commit for that tree, and a fast-forward of the branch to it.
+    public func commitFiles(_ commit: GitMultiFileCommit, context: GitProviderRequestContext) async throws -> GitCommitResult {
+        _ = try context.requiredCredential
+        try GitPontValidator.validate(commit: commit)
+        let headers = try headers(for: context)
+        let git = GitProviderInstance.github.apiBaseURL
+            .appendingPathComponent("repos")
+            .appendingPathComponent(commit.repository.namespace)
+            .appendingPathComponent(commit.repository.name)
+            .appendingPathComponent("git")
+
+        let head: GitHubRefDTO = try await sendJSON(HTTPRequest(
+            method: "GET",
+            url: gitRefURL(for: commit.repository, ref: "heads/\(commit.branch)"),
+            headers: headers
+        ))
+        let parent: GitHubGitCommitDTO = try await sendJSON(HTTPRequest(
+            method: "GET",
+            url: git.appendingPathComponent("commits").appendingPathComponent(head.object.sha),
+            headers: headers
+        ))
+
+        var entries: [[String: Any]] = []
+        for operation in commit.operations {
+            var entry: [String: Any] = ["path": operation.path, "mode": "100644", "type": "blob"]
+            if let content = operation.content {
+                if let text = String(data: content, encoding: .utf8) {
+                    entry["content"] = text
+                } else {
+                    // A tree can only inline text; bytes go up as a blob first.
+                    let blob: GitHubSHADTO = try await sendJSON(HTTPRequest(
+                        method: "POST",
+                        url: git.appendingPathComponent("blobs"),
+                        headers: headers,
+                        body: try JSONSerialization.data(withJSONObject: ["content": content.base64EncodedString(), "encoding": "base64"], options: [.sortedKeys])
+                    ))
+                    entry["sha"] = blob.sha
+                }
+            } else {
+                entry["sha"] = NSNull()
+            }
+            entries.append(entry)
+        }
+
+        let tree: GitHubSHADTO = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: git.appendingPathComponent("trees"),
+            headers: headers,
+            body: try JSONSerialization.data(withJSONObject: ["base_tree": parent.tree.sha, "tree": entries], options: [.sortedKeys])
+        ))
+        var body: [String: Any] = ["message": commit.message, "tree": tree.sha, "parents": [head.object.sha]]
+        if let name = commit.authorName, let email = commit.authorEmail {
+            body["author"] = ["name": name, "email": email]
+        }
+        let created: GitHubGitCommitDTO = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: git.appendingPathComponent("commits"),
+            headers: headers,
+            body: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        ))
+        // Not forced: when the branch moved since `head` was read this is refused.
+        let _: GitHubRefDTO = try await sendJSON(HTTPRequest(
+            method: "PATCH",
+            url: git.appendingPathComponent("refs").appendingPathComponent("heads").appendingPathComponent(commit.branch),
+            headers: headers,
+            body: try JSONSerialization.data(withJSONObject: ["sha": created.sha, "force": false], options: [.sortedKeys])
+        ))
+        return GitCommitResult(commitSHA: created.sha, branch: commit.branch, newVersion: nil, webURL: created.htmlURL)
+    }
+}
+
+private struct GitHubSHADTO: Decodable {
+    var sha: String
+}
+
+private struct GitHubGitCommitDTO: Decodable {
+    var sha: String
+    var tree: GitHubSHADTO
+    var htmlURL: URL?
+
+    enum CodingKeys: String, CodingKey {
+        case sha
+        case tree
+        case htmlURL = "html_url"
+    }
+}
+
+// MARK: - A directory's text files in one request
+
+extension GitHubProvider {
+    /// One GraphQL request: the REST API reads a single file per request, which makes a
+    /// folder of a hundred files a hundred requests.
+    public func readTextFiles(inDirectory reference: GitFileReference, context: GitProviderRequestContext) async throws -> [String: String] {
+        let query = """
+        query($owner: String!, $name: String!, $expression: String!) {
+          repository(owner: $owner, name: $name) {
+            object(expression: $expression) {
+              ... on Tree { entries { name type object { ... on Blob { text isTruncated } } } }
+            }
+          }
+        }
+        """
+        let variables = [
+            "owner": reference.repository.namespace,
+            "name": reference.repository.name,
+            "expression": "\(reference.ref):\(reference.path)"
+        ]
+        var headers = try headers(for: context)
+        headers["Content-Type"] = "application/json"
+        let answer: GitHubTreeTextAnswer = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: GitProviderInstance.github.apiBaseURL.appendingPathComponent("graphql"),
+            headers: headers,
+            body: try JSONSerialization.data(withJSONObject: ["query": query, "variables": variables], options: [.sortedKeys])
+        ))
+        guard let entries = answer.data?.repository?.object?.entries else {
+            throw GitPontError.notFound("GitHub has no directory at \(reference.path)")
+        }
+        var texts: [String: String] = [:]
+        // Binary and cut-off files carry no usable text: they are left to `readFile`.
+        for entry in entries where entry.type == "blob" {
+            if let text = entry.object?.text, entry.object?.isTruncated != true {
+                texts[entry.name] = text
+            }
+        }
+        return texts
+    }
+}
+
+private struct GitHubTreeTextAnswer: Decodable {
+    struct Payload: Decodable { var repository: Repository? }
+    struct Repository: Decodable { var object: Tree? }
+    struct Tree: Decodable { var entries: [Entry]? }
+    struct Entry: Decodable { var name: String; var type: String; var object: Blob? }
+    struct Blob: Decodable { var text: String?; var isTruncated: Bool? }
+    var data: Payload?
 }

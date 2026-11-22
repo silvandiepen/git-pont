@@ -6,7 +6,7 @@ import CryptoKit
 public struct ForgeProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { instances.first?.kind ?? .forgejo }
     public let displayName = "Forge"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
     public let changeRequestTerm: GitChangeRequestTerm = .pullRequest
 
     private let httpClient: any HTTPClient
@@ -1002,4 +1002,82 @@ private extension CharacterSet {
         allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
         return allowed
     }()
+}
+
+// MARK: - Several files in one commit
+
+extension ForgeProvider {
+    /// One call to the "change files" endpoint (Forgejo, and Gitea from 1.20). An update
+    /// or delete has to name the blob it replaces, so the folders involved are listed first.
+    public func commitFiles(_ commit: GitMultiFileCommit, context: GitProviderRequestContext) async throws -> GitCommitResult {
+        _ = try context.requiredCredential
+        try GitPontValidator.validate(commit: commit)
+
+        var blobs: [String: String] = [:]
+        for directory in Set(commit.operations.map { forgeParentDirectory($0.path) }) {
+            do {
+                let entries: [ForgeContentDTO] = try await sendJSON(HTTPRequest(
+                    method: "GET",
+                    url: contentsURL(for: commit.repository, path: directory).gitPontAppendingQuery([
+                        URLQueryItem(name: "ref", value: commit.branch)
+                    ]),
+                    headers: try headers(for: context)
+                ))
+                for entry in entries where entry.type != "dir" {
+                    if let sha = entry.sha { blobs[entry.path] = sha }
+                }
+            } catch GitPontError.notFound {
+                continue
+            }
+        }
+
+        let files = commit.operations.compactMap { operation -> ForgeChangeFile? in
+            let sha = blobs[operation.path]
+            guard let content = operation.content else {
+                // Deleting a file that is not there would fail the whole commit.
+                return sha.map { ForgeChangeFile(operation: "delete", path: operation.path, sha: $0) }
+            }
+            return ForgeChangeFile(operation: sha == nil ? "create" : "update", path: operation.path, content: content.base64EncodedString(), sha: sha)
+        }
+        guard !files.isEmpty else {
+            throw GitPontError.notFound("None of the files to delete exist")
+        }
+        let payload = ForgeChangeFilesRequest(
+            branch: commit.branch,
+            message: commit.message,
+            files: files,
+            author: forgeIdentity(name: commit.authorName, email: commit.authorEmail),
+            committer: forgeIdentity(name: commit.authorName, email: commit.authorEmail)
+        )
+        let response: ForgeChangeFilesResponse = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: repoURL(for: commit.repository).appendingPathComponent("contents"),
+            headers: try headers(for: context),
+            body: try encoder.encode(payload)
+        ))
+        return GitCommitResult(commitSHA: response.commit.sha, branch: commit.branch, newVersion: nil, webURL: response.commit.htmlURL)
+    }
+}
+
+private func forgeParentDirectory(_ path: String) -> String {
+    path.split(separator: "/").dropLast().joined(separator: "/")
+}
+
+private struct ForgeChangeFile: Encodable {
+    var operation: String
+    var path: String
+    var content: String?
+    var sha: String?
+}
+
+private struct ForgeChangeFilesRequest: Encodable {
+    var branch: String
+    var message: String
+    var files: [ForgeChangeFile]
+    var author: ForgeIdentity?
+    var committer: ForgeIdentity?
+}
+
+private struct ForgeChangeFilesResponse: Decodable {
+    var commit: ForgeCommitResponseDTO
 }

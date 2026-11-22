@@ -6,7 +6,7 @@ import CryptoKit
 public struct GitLabProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { instances.first?.kind ?? .gitLabCloud }
     public let displayName = "GitLab"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
     public let changeRequestTerm: GitChangeRequestTerm = .mergeRequest
 
     private let httpClient: any HTTPClient
@@ -1031,4 +1031,106 @@ private extension CharacterSet {
         allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
         return allowed
     }()
+}
+
+// MARK: - Several files in one commit
+
+extension GitLabProvider {
+    /// One call to the commits API with an action per file. GitLab wants to be told
+    /// whether a write creates or updates, so the folders involved are listed first.
+    public func commitFiles(_ commit: GitMultiFileCommit, context: GitProviderRequestContext) async throws -> GitCommitResult {
+        _ = try context.requiredCredential
+        try GitPontValidator.validate(commit: commit)
+
+        var existing = Set<String>()
+        for directory in Set(commit.operations.map { gitLabParentDirectory($0.path) }) {
+            do {
+                let listing = try await listDirectory(
+                    GitFileReference(repository: commit.repository, path: directory, ref: commit.branch),
+                    context: context
+                )
+                existing.formUnion(listing.items.filter { $0.type != .directory }.map(\.path))
+            } catch GitPontError.notFound {
+                continue
+            }
+        }
+
+        let actions = commit.operations.compactMap { operation -> GitLabCommitAction? in
+            guard let content = operation.content else {
+                // Deleting a file that is not there would fail the whole commit.
+                return existing.contains(operation.path) ? GitLabCommitAction(action: "delete", filePath: operation.path) : nil
+            }
+            return GitLabCommitAction(
+                action: existing.contains(operation.path) ? "update" : "create",
+                filePath: operation.path,
+                content: content.base64EncodedString(),
+                encoding: "base64"
+            )
+        }
+        guard !actions.isEmpty else {
+            throw GitPontError.notFound("None of the files to delete exist")
+        }
+        let payload = GitLabCommitRequest(
+            branch: commit.branch,
+            commitMessage: commit.message,
+            actions: actions,
+            authorName: commit.authorName,
+            authorEmail: commit.authorEmail
+        )
+        let created: GitLabCreatedCommitDTO = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: commit.repository.instance.apiBaseURL
+                .appendingPathComponent("projects")
+                .gitPontAppendingEncodedPathComponent(projectID(for: commit.repository))
+                .appendingPathComponent("repository")
+                .appendingPathComponent("commits"),
+            headers: try headers(for: context),
+            body: try encoder.encode(payload)
+        ))
+        return GitCommitResult(commitSHA: created.id, branch: commit.branch, newVersion: .commitID(created.id), webURL: created.webURL)
+    }
+}
+
+private func gitLabParentDirectory(_ path: String) -> String {
+    path.split(separator: "/").dropLast().joined(separator: "/")
+}
+
+private struct GitLabCommitAction: Encodable {
+    var action: String
+    var filePath: String
+    var content: String?
+    var encoding: String?
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case filePath = "file_path"
+        case content
+        case encoding
+    }
+}
+
+private struct GitLabCommitRequest: Encodable {
+    var branch: String
+    var commitMessage: String
+    var actions: [GitLabCommitAction]
+    var authorName: String?
+    var authorEmail: String?
+
+    enum CodingKeys: String, CodingKey {
+        case branch
+        case commitMessage = "commit_message"
+        case actions
+        case authorName = "author_name"
+        case authorEmail = "author_email"
+    }
+}
+
+private struct GitLabCreatedCommitDTO: Decodable {
+    var id: String
+    var webURL: URL?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case webURL = "web_url"
+    }
 }

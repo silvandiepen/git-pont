@@ -5,7 +5,7 @@ import GitPontCore
 public struct BitbucketProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { .bitbucketCloud }
     public let displayName = "Bitbucket"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
     public let changeRequestTerm: GitChangeRequestTerm = .pullRequest
 
     private let httpClient: any HTTPClient
@@ -674,5 +674,32 @@ private extension CharacterSet {
 private extension Data {
     mutating func append(_ value: String) {
         append(Data(value.utf8))
+    }
+}
+
+// MARK: - Several files in one commit
+
+extension BitbucketProvider {
+    /// One post to `src`: every written file is a form part named by its path, every
+    /// deleted file a `files` field. Bitbucket makes a single commit of it.
+    public func commitFiles(_ commit: GitMultiFileCommit, context: GitProviderRequestContext) async throws -> GitCommitResult {
+        _ = try context.requiredCredential
+        try GitPontValidator.validate(commit: commit)
+        var fields = commitFields(message: commit.message, branch: commit.branch, baseBranch: nil, expectedVersion: nil, authorName: commit.authorName, authorEmail: commit.authorEmail)
+        var files: [String: Data] = [:]
+        for operation in commit.operations {
+            if let content = operation.content {
+                files[operation.path] = content
+            } else {
+                fields.append(("files", operation.path))
+            }
+        }
+        let response: BitbucketCommitDTO = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: repositoryURL(commit.repository).appendingPathComponent("src"),
+            headers: try headers(for: context, contentType: "multipart/form-data; boundary=\(multipartBoundary)"),
+            body: multipartBody(fields: fields, files: files)
+        ))
+        return GitCommitResult(commitSHA: response.hash, branch: commit.branch, newVersion: .commitID(response.hash), webURL: response.links?.html?.href)
     }
 }
