@@ -1204,3 +1204,11 @@ extension GitLabProvider {
         return GitList(items: entries.map(\.directoryEntry), truncated: entries.count >= 3000)
     }
 }
+
+// MARK: - Browser links
+
+extension GitLabProvider {
+    public func webURL(for reference: GitFileReference) -> URL? {
+        GitPontWebURL.file(reference, marker: "-/blob")
+    }
+}

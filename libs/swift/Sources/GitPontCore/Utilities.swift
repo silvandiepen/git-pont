@@ -1,6 +1,23 @@
 import Foundation
 
 /// Validation helpers for paths and write requests.
+/// Builds the browser links providers share a shape for: the repository's page, a marker
+/// (`blob`, `-/blob`, `src/branch`, `src`), the ref, then the path.
+public enum GitPontWebURL {
+    public static func file(_ reference: GitFileReference, marker: String) -> URL? {
+        var url = reference.repository.instance.baseURL
+        for part in reference.repository.namespace.split(separator: "/") { url.appendPathComponent(String(part)) }
+        url.appendPathComponent(reference.repository.name)
+        let path = reference.path.split(separator: "/").map(String.init)
+        // The repository's own page when no file is named and the ref is its default.
+        if path.isEmpty, reference.ref.isEmpty { return url }
+        for part in marker.split(separator: "/") { url.appendPathComponent(String(part)) }
+        for part in reference.ref.split(separator: "/") { url.appendPathComponent(String(part)) }
+        for part in path { url.appendPathComponent(part) }
+        return url
+    }
+}
+
 public enum GitPontValidator {
     public static func validate(change: GitFileChange) throws {
         try validateRepositoryPath(change.reference.path)

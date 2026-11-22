@@ -351,6 +351,10 @@ The files are written as given (last writer wins per file), but the commit is ne
 
 `listTree` returns every file and directory under a directory, at any depth. GitHub answers with one call to the git trees API; GitLab with its recursive tree, a hundred entries a page. A folder with hundreds of subfolders is otherwise one `listDirectory` per subfolder. `truncated` is set when the provider cut the answer short. Providers without the capability throw `unsupportedCapability`, and the caller walks the folders.
 
+### Browser links
+
+`provider.webURL(for:)` gives the page that shows a file in the provider's web interface (`…/blob/<ref>/<path>` on GitHub, `…/-/blob/…` on GitLab, `…/src/branch/…` on Forgejo and Gitea, `…/src/…` on Bitbucket). Apps use it for "copy link" and "open in browser" and never build such a link themselves.
+
 ### Webhooks (`webhooks`)
 
 `createWebhook` registers a URL a provider calls on a push, with an optional shared secret, and `deleteWebhook` removes it by the id it returned. Implemented for GitHub, GitLab, Forgejo/Gitea and Bitbucket. GitHub, Forgejo and Bitbucket sign each delivery with the secret; GitLab sends it back in `X-Gitlab-Token`. The account needs admin rights on the repository (the Maintainer role on GitLab); without them the provider answers not found or permission denied.

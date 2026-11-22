@@ -743,3 +743,11 @@ extension BitbucketProvider {
 private struct BitbucketHookDTO: Decodable {
     var uuid: String
 }
+
+// MARK: - Browser links
+
+extension BitbucketProvider {
+    public func webURL(for reference: GitFileReference) -> URL? {
+        GitPontWebURL.file(reference, marker: "src")
+    }
+}

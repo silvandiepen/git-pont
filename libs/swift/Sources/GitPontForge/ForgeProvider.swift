@@ -1133,3 +1133,11 @@ extension ForgeProvider {
 private struct ForgeHookDTO: Decodable {
     var id: Int
 }
+
+// MARK: - Browser links
+
+extension ForgeProvider {
+    public func webURL(for reference: GitFileReference) -> URL? {
+        GitPontWebURL.file(reference, marker: "src/branch")
+    }
+}

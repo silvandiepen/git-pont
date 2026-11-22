@@ -1246,3 +1246,11 @@ private struct GitHubTreeDTO: Decodable {
     var tree: [Entry]
     var truncated: Bool?
 }
+
+// MARK: - Browser links
+
+extension GitHubProvider {
+    public func webURL(for reference: GitFileReference) -> URL? {
+        GitPontWebURL.file(reference, marker: "blob")
+    }
+}

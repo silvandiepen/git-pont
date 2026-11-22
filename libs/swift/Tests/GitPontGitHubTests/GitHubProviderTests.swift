@@ -767,6 +767,13 @@ struct GitHubProviderTests {
         #expect(await client.requests.first?.url.absoluteString == "https://api.github.com/repos/owner/repo/git/trees/main?recursive=1")
     }
 
+
+    @Test func webURLPointsAtTheFilePage() {
+        let provider = GitHubProvider(httpClient: MockHTTPClient())
+        let url = provider.webURL(for: GitFileReference(repository: repositoryReference, path: "docs/My Plan.md", ref: "feature/x"))
+        #expect(url?.absoluteString == "https://github.com/owner/repo/blob/feature/x/docs/My%20Plan.md")
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {
