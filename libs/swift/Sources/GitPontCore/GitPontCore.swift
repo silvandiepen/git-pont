@@ -96,6 +96,21 @@ public final class GitPont: Sendable {
         }
     }
 
+    /// Every file and directory under a directory, at any depth, in one request.
+    ///
+    /// Throws `unsupportedCapability` for a provider without `.treeList`; the caller can
+    /// then walk the folders with `listDirectory`.
+    public func listTree(_ reference: GitFileReference) async throws -> GitList<GitDirectoryEntry> {
+        let provider = try provider(for: reference.repository.instance)
+        guard provider.capabilities.contains(.treeList) else {
+            throw GitPontError.unsupportedCapability("listTree")
+        }
+        let context = try await optionalContext(for: reference.repository.instance)
+        return try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.listTree(reference, context: $0)
+        }
+    }
+
     public func listDirectory(_ reference: GitFileReference) async throws -> GitList<GitDirectoryEntry> {
         let provider = try provider(for: reference.repository.instance)
         let context = try await optionalContext(for: reference.repository.instance)

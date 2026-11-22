@@ -6,7 +6,7 @@ import CryptoKit
 public struct GitLabProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { instances.first?.kind ?? .gitLabCloud }
     public let displayName = "GitLab"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .treeList, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
     public let changeRequestTerm: GitChangeRequestTerm = .mergeRequest
 
     private let httpClient: any HTTPClient
@@ -1180,4 +1180,27 @@ extension GitLabProvider {
 
 private struct GitLabHookDTO: Decodable {
     var id: Int
+}
+
+// MARK: - A whole tree in one request
+
+extension GitLabProvider {
+    /// The repository tree, recursive. GitLab pages it, a hundred entries at a time.
+    public func listTree(_ reference: GitFileReference, context: GitProviderRequestContext) async throws -> GitList<GitDirectoryEntry> {
+        let entries: [GitLabTreeEntryDTO] = try await paginatedJSON(
+            url: reference.repository.instance.apiBaseURL
+                .appendingPathComponent("projects")
+                .gitPontAppendingEncodedPathComponent(projectID(for: reference.repository))
+                .appendingPathComponent("repository")
+                .appendingPathComponent("tree")
+                .gitPontAppendingQuery([
+                    URLQueryItem(name: "path", value: reference.path),
+                    URLQueryItem(name: "ref", value: reference.ref),
+                    URLQueryItem(name: "recursive", value: "true"),
+                    URLQueryItem(name: "per_page", value: "100")
+                ]),
+            headers: try headers(for: context)
+        )
+        return GitList(items: entries.map(\.directoryEntry), truncated: entries.count >= 3000)
+    }
 }

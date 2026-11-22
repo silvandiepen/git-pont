@@ -22,6 +22,8 @@ public struct GitProviderCapabilities: OptionSet, Sendable {
     public static let branchDelete = GitProviderCapabilities(rawValue: 1 << 11)
     /// Every text file of a directory in one request (`readTextFiles`).
     public static let directoryTextRead = GitProviderCapabilities(rawValue: 1 << 12)
+    /// Everything under a directory, at any depth, in one request (`listTree`).
+    public static let treeList = GitProviderCapabilities(rawValue: 1 << 14)
     /// Create and delete repository webhooks.
     public static let webhooks = GitProviderCapabilities(rawValue: 1 << 13)
 }
@@ -50,6 +52,9 @@ public protocol GitProvider: Sendable {
     /// File name → text for the text files directly in a directory, in one round trip.
     /// Binary files and files the provider cuts off are left out; read those with `readFile`.
     func readTextFiles(inDirectory reference: GitFileReference, context: GitProviderRequestContext) async throws -> [String: String]
+    /// Every file and directory under a directory, at any depth. Paths are repository paths.
+    /// `truncated` is set when the provider cut the answer short.
+    func listTree(_ reference: GitFileReference, context: GitProviderRequestContext) async throws -> GitList<GitDirectoryEntry>
     func commitFile(_ change: GitFileChange, context: GitProviderRequestContext) async throws -> GitCommitResult
     func deleteFile(_ request: GitFileDeleteRequest, context: GitProviderRequestContext) async throws -> GitCommitResult
     /// Write and delete several files in one commit. Providers that can advertise `.batchCommit`.
@@ -65,6 +70,10 @@ public protocol GitProvider: Sendable {
 }
 
 public extension GitProvider {
+    func listTree(_ reference: GitFileReference, context: GitProviderRequestContext) async throws -> GitList<GitDirectoryEntry> {
+        throw GitPontError.unsupportedCapability("listTree")
+    }
+
     func createWebhook(_ request: GitWebhookRequest, context: GitProviderRequestContext) async throws -> GitWebhook {
         throw GitPontError.unsupportedCapability("createWebhook")
     }

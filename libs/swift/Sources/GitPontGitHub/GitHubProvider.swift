@@ -13,6 +13,7 @@ public struct GitHubProvider: GitProvider, GitAuthenticationProvider {
         .batchCommit,
         .directoryTextRead,
         .webhooks,
+        .treeList,
         .directoryList,
         .branchCreate,
         .repositoryCreate,
@@ -1203,4 +1204,45 @@ extension GitHubProvider {
 
 private struct GitHubHookDTO: Decodable {
     var id: Int
+}
+
+// MARK: - A whole tree in one request
+
+extension GitHubProvider {
+    /// The git trees API, recursive, addressed as `ref:path`.
+    public func listTree(_ reference: GitFileReference, context: GitProviderRequestContext) async throws -> GitList<GitDirectoryEntry> {
+        let root = reference.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let expression = root.isEmpty ? reference.ref : "\(reference.ref):\(root)"
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        let encoded = expression.addingPercentEncoding(withAllowedCharacters: allowed) ?? expression
+        guard let url = URL(string: GitProviderInstance.github.apiBaseURL.absoluteString
+            + "/repos/\(reference.repository.namespace)/\(reference.repository.name)/git/trees/\(encoded)?recursive=1") else {
+            throw GitPontError.unsupportedURL(reference.path)
+        }
+        let tree: GitHubTreeDTO = try await sendJSON(HTTPRequest(method: "GET", url: url, headers: try headers(for: context)))
+        let entries = tree.tree.compactMap { entry -> GitDirectoryEntry? in
+            let type: GitDirectoryEntry.EntryType
+            switch entry.type {
+            case "blob": type = entry.mode == "120000" ? .symlink : .file
+            case "tree": type = .directory
+            case "commit": type = .submodule
+            default: return nil
+            }
+            let path = root.isEmpty ? entry.path : "\(root)/\(entry.path)"
+            return GitDirectoryEntry(name: String(entry.path.split(separator: "/").last ?? ""), path: path, type: type, size: entry.size)
+        }
+        return GitList(items: entries, truncated: tree.truncated ?? false)
+    }
+}
+
+private struct GitHubTreeDTO: Decodable {
+    struct Entry: Decodable {
+        var path: String
+        var mode: String?
+        var type: String
+        var size: Int?
+    }
+    var tree: [Entry]
+    var truncated: Bool?
 }
