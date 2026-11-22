@@ -12,6 +12,7 @@ public struct GitHubProvider: GitProvider, GitAuthenticationProvider {
         .fileDelete,
         .batchCommit,
         .directoryTextRead,
+        .webhooks,
         .directoryList,
         .branchCreate,
         .repositoryCreate,
@@ -265,7 +266,24 @@ public struct GitHubProvider: GitProvider, GitAuthenticationProvider {
 
     public func deleteFile(_ request: GitFileDeleteRequest, context: GitProviderRequestContext) async throws -> GitCommitResult {
         _ = try context.requiredCredential
-        guard let sha = request.expectedVersion?.githubSHA else {
+        let sha: String
+        if let known = request.expectedVersion?.githubSHA {
+            sha = known
+        } else if request.allowBlindOverwrite {
+            // GitHub only deletes a named blob. For a blind delete, ask which one is
+            // there now; the answer carries the sha for a file of any size.
+            let current: GitHubContentDTO = try await sendJSON(HTTPRequest(
+                method: "GET",
+                url: contentsURL(for: request.reference.repository, path: request.reference.path).gitPontAppendingQuery([
+                    URLQueryItem(name: "ref", value: request.targetBranch)
+                ]),
+                headers: try headers(for: context)
+            ))
+            guard let found = current.sha else {
+                throw GitPontError.invalidProviderResponse("GitHub did not name the file's blob")
+            }
+            sha = found
+        } else {
             throw GitPontError.conflict(GitConflict(
                 reference: request.reference,
                 expectedVersion: request.expectedVersion,
@@ -442,6 +460,9 @@ public struct GitHubProvider: GitProvider, GitAuthenticationProvider {
         }
         var headers = try authorizationHeaders(for: credential, authMethod: context.connection?.authMethod ?? .personalAccessToken)
         headers["Accept"] = "application/vnd.github+json"
+        // Every body these requests carry is JSON. Left unset, URLSession labels a body
+        // as a form, which the stricter hosts refuse.
+        headers["Content-Type"] = "application/json"
         return headers
     }
 
@@ -1142,4 +1163,44 @@ private struct GitHubTreeTextAnswer: Decodable {
     struct Entry: Decodable { var name: String; var type: String; var object: Blob? }
     struct Blob: Decodable { var text: String?; var isTruncated: Bool? }
     var data: Payload?
+}
+
+// MARK: - Webhooks
+
+extension GitHubProvider {
+    public func createWebhook(_ request: GitWebhookRequest, context: GitProviderRequestContext) async throws -> GitWebhook {
+        _ = try context.requiredCredential
+        var config: [String: Any] = ["url": request.url.absoluteString, "content_type": "json"]
+        if let secret = request.secret { config["secret"] = secret }
+        let body: [String: Any] = ["name": "web", "active": true, "events": request.events.map(\.rawValue), "config": config]
+        let created: GitHubHookDTO = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: hooksURL(for: request.repository),
+            headers: try headers(for: context),
+            body: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        ))
+        return GitWebhook(id: String(created.id), url: request.url)
+    }
+
+    public func deleteWebhook(id: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws {
+        _ = try context.requiredCredential
+        let response = try await httpClient.send(HTTPRequest(
+            method: "DELETE",
+            url: hooksURL(for: repository).appendingPathComponent(id),
+            headers: try headers(for: context)
+        ))
+        try validate(response)
+    }
+
+    private func hooksURL(for repository: GitRepositoryReference) -> URL {
+        GitProviderInstance.github.apiBaseURL
+            .appendingPathComponent("repos")
+            .appendingPathComponent(repository.namespace)
+            .appendingPathComponent(repository.name)
+            .appendingPathComponent("hooks")
+    }
+}
+
+private struct GitHubHookDTO: Decodable {
+    var id: Int
 }

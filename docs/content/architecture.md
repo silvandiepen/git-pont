@@ -347,6 +347,14 @@ The files are written as given (last writer wins per file), but the commit is ne
 
 `readTextFiles(inDirectory:)` returns file name → text for the text files directly in a directory. GitHub answers it with one GraphQL request; a folder of a hundred files is otherwise a hundred requests. Binary files and files the provider cuts off are left out and are read with `readFile`. Providers without the capability throw `unsupportedCapability`, and the caller reads file by file.
 
+### Webhooks (`webhooks`)
+
+`createWebhook` registers a URL a provider calls on a push, with an optional shared secret, and `deleteWebhook` removes it by the id it returned. Implemented for GitHub, GitLab, Forgejo/Gitea and Bitbucket. GitHub, Forgejo and Bitbucket sign each delivery with the secret; GitLab sends it back in `X-Gitlab-Token`. The account needs admin rights on the repository (the Maintainer role on GitLab); without them the provider answers not found or permission denied.
+
+### Blind deletes
+
+GitHub and Forgejo only delete a blob that is named. `deleteFile` with `allowBlindOverwrite` and no expected version looks the blob up first, for a file of any size, so the caller does not have to.
+
 ### Large files
 
 `readFile` on GitHub falls back to the raw media type for files the JSON contents answer does not inline (over 1 MB, up to 100 MB), so callers get the bytes either way.

@@ -369,6 +369,43 @@ public struct GitMultiFileCommit: Sendable {
     }
 }
 
+/// Request to make a provider call a URL when something happens in a repository.
+public struct GitWebhookRequest: Sendable {
+    /// What the webhook fires on.
+    public enum Event: String, Sendable, Codable {
+        case push
+    }
+
+    public var repository: GitRepositoryReference
+    public var url: URL
+    /// Shared secret. GitHub, Forgejo and Bitbucket sign each delivery with it; GitLab
+    /// sends it back in the `X-Gitlab-Token` header.
+    public var secret: String?
+    public var events: [Event]
+    /// A label shown in the provider's settings, where the provider has one.
+    public var name: String?
+
+    public init(repository: GitRepositoryReference, url: URL, secret: String? = nil, events: [Event] = [.push], name: String? = nil) {
+        self.repository = repository
+        self.url = url
+        self.secret = secret
+        self.events = events
+        self.name = name
+    }
+}
+
+/// A webhook registered on a repository.
+public struct GitWebhook: Hashable, Sendable, Codable {
+    /// The provider's id for the webhook, as text (Bitbucket's is a UUID).
+    public var id: String
+    public var url: URL?
+
+    public init(id: String, url: URL? = nil) {
+        self.id = id
+        self.url = url
+    }
+}
+
 /// Request to delete a repository file.
 public struct GitFileDeleteRequest: Sendable {
     public var reference: GitFileReference

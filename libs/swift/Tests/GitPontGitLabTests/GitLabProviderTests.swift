@@ -555,6 +555,38 @@ struct GitLabProviderTests {
         #expect(!body.contains("never-existed"))
     }
 
+
+    @Test func createWebhookPostsAPushHookWithTheSecretAsToken() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 201, body: Data(#"{"id":7}"#.utf8))])
+        let provider = GitLabProvider(httpClient: client)
+
+        let hook = try await provider.createWebhook(
+            GitWebhookRequest(repository: repositoryReference, url: URL(string: "https://relay.example/hook/abc")!, secret: "s3cret", name: "Live updates"),
+            context: authenticatedContext
+        )
+
+        #expect(hook.id == "7")
+        let requests = await client.requests
+        #expect(requests[0].method == "POST")
+        #expect(requests[0].url.absoluteString == "https://gitlab.com/api/v4/projects/group%2Fproject/hooks")
+        #expect(requests[0].headers["Content-Type"] == "application/json")
+        let body = String(decoding: requests[0].body ?? Data(), as: UTF8.self)
+        #expect(body.contains(#""push_events":true"#))
+        #expect(body.contains(#""token":"s3cret""#))
+        #expect(body.contains(#""name":"Live updates""#))
+    }
+
+    @Test func deleteWebhookDeletesItByID() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 204)])
+        let provider = GitLabProvider(httpClient: client)
+
+        try await provider.deleteWebhook(id: "7", repository: repositoryReference, context: authenticatedContext)
+
+        let requests = await client.requests
+        #expect(requests[0].method == "DELETE")
+        #expect(requests[0].url.absoluteString == "https://gitlab.com/api/v4/projects/group%2Fproject/hooks/7")
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {

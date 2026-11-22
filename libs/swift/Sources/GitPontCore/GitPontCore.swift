@@ -114,6 +114,29 @@ public final class GitPont: Sendable {
         }
     }
 
+    /// Register a webhook on a repository. Needs admin rights there (Maintainer on GitLab).
+    public func createWebhook(_ request: GitWebhookRequest) async throws -> GitWebhook {
+        let provider = try provider(for: request.repository.instance)
+        guard provider.capabilities.contains(.webhooks) else {
+            throw GitPontError.unsupportedCapability("createWebhook")
+        }
+        let context = try await requiredContext(for: request.repository.instance)
+        return try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.createWebhook(request, context: $0)
+        }
+    }
+
+    public func deleteWebhook(id: String, repository: GitRepositoryReference) async throws {
+        let provider = try provider(for: repository.instance)
+        guard provider.capabilities.contains(.webhooks) else {
+            throw GitPontError.unsupportedCapability("deleteWebhook")
+        }
+        let context = try await requiredContext(for: repository.instance)
+        try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.deleteWebhook(id: id, repository: repository, context: $0)
+        }
+    }
+
     /// Write and delete several files as one commit on a branch.
     ///
     /// Throws `unsupportedCapability` for a provider without `.batchCommit`; the caller
