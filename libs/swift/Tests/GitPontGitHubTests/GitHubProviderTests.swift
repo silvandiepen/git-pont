@@ -739,6 +739,34 @@ struct GitHubProviderTests {
         #expect(requests[1].bodyString.contains(#""sha":"blob-sha""#))
     }
 
+
+    @Test func listTreeReadsAFolderAtAnyDepthInOneRequest() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"{"sha":"t","truncated":false,"tree":[{"path":"plan.md","mode":"100644","type":"blob","size":12},{"path":"systems","mode":"040000","type":"tree"},{"path":"systems/camera.md","mode":"100644","type":"blob","size":40},{"path":"link","mode":"120000","type":"blob"},{"path":"vendor","mode":"160000","type":"commit"}]}"#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        let tree = try await provider.listTree(GitFileReference(repository: repositoryReference, path: "docs/guide", ref: "feature/x"), context: authenticatedContext)
+
+        #expect(tree.items.map(\.path) == ["docs/guide/plan.md", "docs/guide/systems", "docs/guide/systems/camera.md", "docs/guide/link", "docs/guide/vendor"])
+        #expect(tree.items.map(\.type) == [.file, .directory, .file, .symlink, .submodule])
+        #expect(tree.items[2].name == "camera.md")
+        #expect(tree.truncated == false)
+        let requests = await client.requests
+        #expect(requests.count == 1)
+        #expect(requests[0].url.absoluteString == "https://api.github.com/repos/owner/repo/git/trees/feature%2Fx%3Adocs%2Fguide?recursive=1")
+    }
+
+    @Test func listTreeOfTheRepositoryRootNamesOnlyTheRef() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 200, body: Data(#"{"tree":[],"truncated":true}"#.utf8))])
+        let provider = GitHubProvider(httpClient: client)
+
+        let tree = try await provider.listTree(GitFileReference(repository: repositoryReference, path: "", ref: "main"), context: authenticatedContext)
+
+        #expect(tree.truncated)
+        #expect(await client.requests.first?.url.absoluteString == "https://api.github.com/repos/owner/repo/git/trees/main?recursive=1")
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {

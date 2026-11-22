@@ -587,6 +587,20 @@ struct GitLabProviderTests {
         #expect(requests[0].url.absoluteString == "https://gitlab.com/api/v4/projects/group%2Fproject/hooks/7")
     }
 
+
+    @Test func listTreeAsksForTheRecursiveTree() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"[{"name":"systems","path":"docs/systems","type":"tree"},{"name":"camera.md","path":"docs/systems/camera.md","type":"blob"}]"#.utf8))
+        ])
+        let provider = GitLabProvider(httpClient: client)
+
+        let tree = try await provider.listTree(GitFileReference(repository: repositoryReference, path: "docs", ref: "main"), context: authenticatedContext)
+
+        #expect(tree.items.map(\.path) == ["docs/systems", "docs/systems/camera.md"])
+        #expect(tree.items.map(\.type) == [.directory, .file])
+        #expect(await client.requests.first?.url.absoluteString == "https://gitlab.com/api/v4/projects/group%2Fproject/repository/tree?path=docs&ref=main&recursive=true&per_page=100")
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {
