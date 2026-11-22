@@ -530,6 +530,26 @@ struct ForgeProviderTests {
         #expect(body.contains(#"{"operation":"delete","path":"docs\/old.md","sha":"blob-old"}"#))
     }
 
+
+    @Test func createWebhookPostsAPushHook() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 201, body: Data(#"{"id":9}"#.utf8))])
+        let provider = ForgeProvider(httpClient: client)
+
+        let hook = try await provider.createWebhook(
+            GitWebhookRequest(repository: repositoryReference, url: URL(string: "https://relay.example/hook/abc")!, secret: "s3cret"),
+            context: authenticatedContext
+        )
+
+        #expect(hook.id == "9")
+        let requests = await client.requests
+        #expect(requests[0].url.absoluteString == "https://codeberg.org/api/v1/repos/owner/repo/hooks")
+        #expect(requests[0].headers["Content-Type"] == "application/json")
+        let body = String(decoding: requests[0].body ?? Data(), as: UTF8.self)
+        #expect(body.contains(#""type":"gitea""#))
+        #expect(body.contains(#""events":["push"]"#))
+        #expect(body.contains(#""secret":"s3cret""#))
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {

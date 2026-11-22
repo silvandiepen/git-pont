@@ -5,7 +5,7 @@ import GitPontCore
 public struct BitbucketProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { .bitbucketCloud }
     public let displayName = "Bitbucket"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
     public let changeRequestTerm: GitChangeRequestTerm = .pullRequest
 
     private let httpClient: any HTTPClient
@@ -702,4 +702,44 @@ extension BitbucketProvider {
         ))
         return GitCommitResult(commitSHA: response.hash, branch: commit.branch, newVersion: .commitID(response.hash), webURL: response.links?.html?.href)
     }
+}
+
+// MARK: - Webhooks
+
+extension BitbucketProvider {
+    public func createWebhook(_ request: GitWebhookRequest, context: GitProviderRequestContext) async throws -> GitWebhook {
+        _ = try context.requiredCredential
+        var body: [String: Any] = [
+            "description": request.name ?? "Webhook",
+            "url": request.url.absoluteString,
+            "active": true,
+            "events": request.events.map { event -> String in
+                switch event {
+                case .push: return "repo:push"
+                }
+            }
+        ]
+        if let secret = request.secret { body["secret"] = secret }
+        let created: BitbucketHookDTO = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: repositoryURL(request.repository).appendingPathComponent("hooks"),
+            headers: try headers(for: context, contentType: "application/json"),
+            body: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        ))
+        return GitWebhook(id: created.uuid, url: request.url)
+    }
+
+    public func deleteWebhook(id: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws {
+        _ = try context.requiredCredential
+        let response = try await httpClient.send(HTTPRequest(
+            method: "DELETE",
+            url: repositoryURL(repository).appendingPathComponent("hooks").appendingPathComponent(id),
+            headers: try headers(for: context)
+        ))
+        try validate(response)
+    }
+}
+
+private struct BitbucketHookDTO: Decodable {
+    var uuid: String
 }

@@ -160,6 +160,24 @@ struct BitbucketProviderTests {
         #expect(body.contains("name=\"files\"\r\n\r\ndocs/old.md"))
     }
 
+
+    @Test func createWebhookPostsARepoPushHook() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 201, body: Data(#"{"uuid":"{abc-123}"}"#.utf8))])
+        let provider = BitbucketProvider(httpClient: client)
+
+        let hook = try await provider.createWebhook(
+            GitWebhookRequest(repository: repositoryReference, url: URL(string: "https://relay.example/hook/abc")!, secret: "s3cret", name: "Live updates"),
+            context: authenticatedContext
+        )
+
+        #expect(hook.id == "{abc-123}")
+        let requests = await client.requests
+        #expect(requests[0].url.absoluteString.hasSuffix("/repositories/workspace/repo/hooks"))
+        let body = String(decoding: requests[0].body ?? Data(), as: UTF8.self)
+        #expect(body.contains(#""events":["repo:push"]"#))
+        #expect(body.contains(#""description":"Live updates""#))
+    }
+
 }
 
 private let repositoryReference = GitRepositoryReference(instance: .bitbucketCloud, namespace: "workspace", name: "repo")

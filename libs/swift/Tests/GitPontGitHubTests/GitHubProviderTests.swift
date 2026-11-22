@@ -676,6 +676,69 @@ struct GitHubProviderTests {
         }
     }
 
+
+    @Test func createWebhookPostsAPushHook() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 201, body: Data(#"{"id":42}"#.utf8))])
+        let provider = GitHubProvider(httpClient: client)
+
+        let hook = try await provider.createWebhook(
+            GitWebhookRequest(repository: repositoryReference, url: URL(string: "https://relay.example/hook/abc")!, secret: "s3cret"),
+            context: authenticatedContext
+        )
+
+        #expect(hook.id == "42")
+        let request = await client.requests.first
+        #expect(request?.method == "POST")
+        #expect(request?.url.absoluteString == "https://api.github.com/repos/owner/repo/hooks")
+        #expect(request?.headers["Content-Type"] == "application/json")
+        #expect(request?.bodyString.contains(#""events":["push"]"#) == true)
+        #expect(request?.bodyString.contains(#""secret":"s3cret""#) == true)
+        #expect(request?.bodyString.contains(#""content_type":"json""#) == true)
+    }
+
+    @Test func deleteWebhookDeletesItByID() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 204)])
+        let provider = GitHubProvider(httpClient: client)
+
+        try await provider.deleteWebhook(id: "42", repository: repositoryReference, context: authenticatedContext)
+
+        let request = await client.requests.first
+        #expect(request?.method == "DELETE")
+        #expect(request?.url.absoluteString == "https://api.github.com/repos/owner/repo/hooks/42")
+    }
+
+    @Test func createWebhookWithoutAdminRightsIsNotFound() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 404)])
+        let provider = GitHubProvider(httpClient: client)
+
+        do {
+            _ = try await provider.createWebhook(
+                GitWebhookRequest(repository: repositoryReference, url: URL(string: "https://relay.example/hook")!),
+                context: authenticatedContext
+            )
+            Issue.record("Expected notFound")
+        } catch GitPontError.notFound {
+        }
+    }
+
+    @Test func blindDeleteLooksUpTheBlobFirst() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"{"type":"file","name":"big.png","path":"big.png","sha":"blob-sha","size":2000000,"encoding":"none","content":""}"#.utf8)),
+            HTTPResponse(statusCode: 200, body: Data(#"{"content":null,"commit":{"sha":"commit-sha"}}"#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        let result = try await provider.deleteFile(
+            GitFileDeleteRequest(reference: fileReference(path: "big.png"), message: "Delete", targetBranch: "main", allowBlindOverwrite: true),
+            context: authenticatedContext
+        )
+
+        #expect(result.commitSHA == "commit-sha")
+        let requests = await client.requests
+        #expect(requests.map(\.method) == ["GET", "DELETE"])
+        #expect(requests[1].bodyString.contains(#""sha":"blob-sha""#))
+    }
+
 }
 
 private struct MockHTTPClient: HTTPClient {

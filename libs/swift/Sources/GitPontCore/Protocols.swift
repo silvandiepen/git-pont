@@ -22,6 +22,8 @@ public struct GitProviderCapabilities: OptionSet, Sendable {
     public static let branchDelete = GitProviderCapabilities(rawValue: 1 << 11)
     /// Every text file of a directory in one request (`readTextFiles`).
     public static let directoryTextRead = GitProviderCapabilities(rawValue: 1 << 12)
+    /// Create and delete repository webhooks.
+    public static let webhooks = GitProviderCapabilities(rawValue: 1 << 13)
 }
 
 /// Provider-specific wording for change request objects.
@@ -52,6 +54,8 @@ public protocol GitProvider: Sendable {
     func deleteFile(_ request: GitFileDeleteRequest, context: GitProviderRequestContext) async throws -> GitCommitResult
     /// Write and delete several files in one commit. Providers that can advertise `.batchCommit`.
     func commitFiles(_ commit: GitMultiFileCommit, context: GitProviderRequestContext) async throws -> GitCommitResult
+    func createWebhook(_ request: GitWebhookRequest, context: GitProviderRequestContext) async throws -> GitWebhook
+    func deleteWebhook(id: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws
     func createBranch(_ request: GitCreateBranchRequest, context: GitProviderRequestContext) async throws -> GitBranch
     func deleteBranch(_ request: GitDeleteBranchRequest, context: GitProviderRequestContext) async throws
     func createRepository(_ request: GitCreateRepositoryRequest, context: GitProviderRequestContext) async throws -> GitRepository
@@ -61,6 +65,14 @@ public protocol GitProvider: Sendable {
 }
 
 public extension GitProvider {
+    func createWebhook(_ request: GitWebhookRequest, context: GitProviderRequestContext) async throws -> GitWebhook {
+        throw GitPontError.unsupportedCapability("createWebhook")
+    }
+
+    func deleteWebhook(id: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws {
+        throw GitPontError.unsupportedCapability("deleteWebhook")
+    }
+
     func readTextFiles(inDirectory reference: GitFileReference, context: GitProviderRequestContext) async throws -> [String: String] {
         throw GitPontError.unsupportedCapability("readTextFiles")
     }

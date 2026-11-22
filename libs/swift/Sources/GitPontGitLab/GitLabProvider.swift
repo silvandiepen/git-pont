@@ -6,7 +6,7 @@ import CryptoKit
 public struct GitLabProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { instances.first?.kind ?? .gitLabCloud }
     public let displayName = "GitLab"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
     public let changeRequestTerm: GitChangeRequestTerm = .mergeRequest
 
     private let httpClient: any HTTPClient
@@ -432,7 +432,11 @@ public struct GitLabProvider: GitProvider, GitAuthenticationProvider {
         guard let credential = context.credential else {
             return [:]
         }
-        return try authorizationHeaders(for: credential, authMethod: context.connection?.authMethod ?? .personalAccessToken)
+        var headers = try authorizationHeaders(for: credential, authMethod: context.connection?.authMethod ?? .personalAccessToken)
+        // Every body these requests carry is JSON. Left unset, URLSession labels a body
+        // as a form, and GitLab then does not read the JSON.
+        headers["Content-Type"] = "application/json"
+        return headers
     }
 
     private func fileURL(for reference: GitFileReference) -> URL {
@@ -1133,4 +1137,47 @@ private struct GitLabCreatedCommitDTO: Decodable {
         case id
         case webURL = "web_url"
     }
+}
+
+// MARK: - Webhooks
+
+extension GitLabProvider {
+    public func createWebhook(_ request: GitWebhookRequest, context: GitProviderRequestContext) async throws -> GitWebhook {
+        _ = try context.requiredCredential
+        var body: [String: Any] = [
+            "url": request.url.absoluteString,
+            "push_events": request.events.contains(.push),
+            "enable_ssl_verification": true
+        ]
+        if let secret = request.secret { body["token"] = secret }
+        if let name = request.name { body["name"] = name }
+        let created: GitLabHookDTO = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: hooksURL(for: request.repository),
+            headers: try headers(for: context),
+            body: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        ))
+        return GitWebhook(id: String(created.id), url: request.url)
+    }
+
+    public func deleteWebhook(id: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws {
+        _ = try context.requiredCredential
+        let response = try await httpClient.send(HTTPRequest(
+            method: "DELETE",
+            url: hooksURL(for: repository).appendingPathComponent(id),
+            headers: try headers(for: context)
+        ))
+        try validate(response)
+    }
+
+    private func hooksURL(for repository: GitRepositoryReference) -> URL {
+        repository.instance.apiBaseURL
+            .appendingPathComponent("projects")
+            .gitPontAppendingEncodedPathComponent(projectID(for: repository))
+            .appendingPathComponent("hooks")
+    }
+}
+
+private struct GitLabHookDTO: Decodable {
+    var id: Int
 }

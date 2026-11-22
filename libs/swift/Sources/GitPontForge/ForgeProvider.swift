@@ -6,7 +6,7 @@ import CryptoKit
 public struct ForgeProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { instances.first?.kind ?? .forgejo }
     public let displayName = "Forge"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
     public let changeRequestTerm: GitChangeRequestTerm = .pullRequest
 
     private let httpClient: any HTTPClient
@@ -267,7 +267,23 @@ public struct ForgeProvider: GitProvider, GitAuthenticationProvider {
 
     public func deleteFile(_ request: GitFileDeleteRequest, context: GitProviderRequestContext) async throws -> GitCommitResult {
         _ = try context.requiredCredential
-        guard let sha = request.expectedVersion?.forgeSHA else {
+        let sha: String
+        if let known = request.expectedVersion?.forgeSHA {
+            sha = known
+        } else if request.allowBlindOverwrite {
+            // A delete has to name the blob it removes; for a blind one, look it up.
+            let current: ForgeContentDTO = try await sendJSON(HTTPRequest(
+                method: "GET",
+                url: contentsURL(for: request.reference.repository, path: request.reference.path).gitPontAppendingQuery([
+                    URLQueryItem(name: "ref", value: request.targetBranch)
+                ]),
+                headers: try headers(for: context)
+            ))
+            guard let found = current.sha else {
+                throw GitPontError.invalidProviderResponse("The forge did not name the file's blob")
+            }
+            sha = found
+        } else {
             throw GitPontError.conflict(GitConflict(
                 reference: request.reference,
                 expectedVersion: request.expectedVersion,
@@ -414,7 +430,11 @@ public struct ForgeProvider: GitProvider, GitAuthenticationProvider {
         guard let credential = context.credential else {
             return [:]
         }
-        return try authorizationHeaders(for: credential, authMethod: context.connection?.authMethod ?? .personalAccessToken)
+        var headers = try authorizationHeaders(for: credential, authMethod: context.connection?.authMethod ?? .personalAccessToken)
+        // Every body these requests carry is JSON. Left unset, URLSession labels a body
+        // as a form, and the forge then ignores the JSON.
+        headers["Content-Type"] = "application/json"
+        return headers
     }
 
     private func repoURL(for reference: GitRepositoryReference) -> URL {
@@ -1080,4 +1100,36 @@ private struct ForgeChangeFilesRequest: Encodable {
 
 private struct ForgeChangeFilesResponse: Decodable {
     var commit: ForgeCommitResponseDTO
+}
+
+// MARK: - Webhooks
+
+extension ForgeProvider {
+    public func createWebhook(_ request: GitWebhookRequest, context: GitProviderRequestContext) async throws -> GitWebhook {
+        _ = try context.requiredCredential
+        var config: [String: Any] = ["url": request.url.absoluteString, "content_type": "json"]
+        if let secret = request.secret { config["secret"] = secret }
+        let body: [String: Any] = ["type": "gitea", "active": true, "events": request.events.map(\.rawValue), "config": config]
+        let created: ForgeHookDTO = try await sendJSON(HTTPRequest(
+            method: "POST",
+            url: repoURL(for: request.repository).appendingPathComponent("hooks"),
+            headers: try headers(for: context),
+            body: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        ))
+        return GitWebhook(id: String(created.id), url: request.url)
+    }
+
+    public func deleteWebhook(id: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws {
+        _ = try context.requiredCredential
+        let response = try await httpClient.send(HTTPRequest(
+            method: "DELETE",
+            url: repoURL(for: repository).appendingPathComponent("hooks").appendingPathComponent(id),
+            headers: try headers(for: context)
+        ))
+        try validate(response)
+    }
+}
+
+private struct ForgeHookDTO: Decodable {
+    var id: Int
 }
