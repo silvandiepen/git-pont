@@ -20,7 +20,9 @@ public struct GitHubProvider: GitProvider, GitAuthenticationProvider {
         .repositoryFork,
         .pullRequestCreate,
         .gitCLICredentials,
-        .branchDelete
+        .branchDelete,
+        .commitHistory,
+        .pullRequestList
     ]
     public let changeRequestTerm: GitChangeRequestTerm = .pullRequest
 
@@ -1252,5 +1254,175 @@ private struct GitHubTreeDTO: Decodable {
 extension GitHubProvider {
     public func webURL(for reference: GitFileReference) -> URL? {
         GitPontWebURL.file(reference, marker: "blob")
+    }
+}
+
+
+// MARK: - Commit history and pull request lists
+
+extension GitHubProvider {
+    public func commits(_ query: GitCommitHistoryQuery, context: GitProviderRequestContext) async throws -> GitList<GitCommitSummary> {
+        var items = [
+            URLQueryItem(name: "per_page", value: String(query.perPage)),
+            URLQueryItem(name: "page", value: String(query.page))
+        ]
+        if let ref = query.ref, !ref.isEmpty { items.append(URLQueryItem(name: "sha", value: ref)) }
+        if let path = query.path, !path.isEmpty { items.append(URLQueryItem(name: "path", value: path)) }
+        let url = repositoryAPIURL(query.repository).appendingPathComponent("commits").gitPontAppendingQuery(items)
+        let response = try await httpClient.send(HTTPRequest(method: "GET", url: url, headers: try headers(for: context)))
+        try validate(response)
+        let dtos: [GitHubCommitListDTO]
+        do { dtos = try decoder.decode([GitHubCommitListDTO].self, from: response.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+        return GitList(items: dtos.map(\.summary), truncated: response.gitPontNextLinkURL != nil)
+    }
+
+    public func commit(sha: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitCommitDetail {
+        let url = repositoryAPIURL(repository).appendingPathComponent("commits").appendingPathComponent(sha)
+            .gitPontAppendingQuery([URLQueryItem(name: "per_page", value: "300")])
+        let response = try await httpClient.send(HTTPRequest(method: "GET", url: url, headers: try headers(for: context)))
+        try validate(response)
+        let dto: GitHubCommitListDTO
+        do { dto = try decoder.decode(GitHubCommitListDTO.self, from: response.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+        return GitCommitDetail(
+            summary: dto.summary,
+            files: (dto.files ?? []).map(\.change),
+            filesTruncated: response.gitPontNextLinkURL != nil)
+    }
+
+    public func pullRequests(_ query: GitPullRequestListQuery, context: GitProviderRequestContext) async throws -> GitList<GitPullRequest> {
+        let url = repositoryAPIURL(query.repository).appendingPathComponent("pulls").gitPontAppendingQuery([
+            URLQueryItem(name: "state", value: query.filter.rawValue),
+            URLQueryItem(name: "sort", value: "updated"),
+            URLQueryItem(name: "direction", value: "desc"),
+            URLQueryItem(name: "per_page", value: String(query.perPage)),
+            URLQueryItem(name: "page", value: String(query.page))
+        ])
+        let response = try await httpClient.send(HTTPRequest(method: "GET", url: url, headers: try headers(for: context)))
+        try validate(response)
+        let dtos: [GitHubPullRequestListDTO]
+        do { dtos = try decoder.decode([GitHubPullRequestListDTO].self, from: response.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+        return GitList(items: dtos.map(\.pullRequest), truncated: response.gitPontNextLinkURL != nil)
+    }
+
+    private func repositoryAPIURL(_ repository: GitRepositoryReference) -> URL {
+        GitProviderInstance.github.apiBaseURL
+            .appendingPathComponent("repos")
+            .appendingPathComponent(repository.namespace)
+            .appendingPathComponent(repository.name)
+    }
+}
+
+private struct GitHubCommitListDTO: Decodable {
+    struct Inner: Decodable {
+        struct Person: Decodable { var name: String?; var email: String?; var date: Date? }
+        var message: String
+        var author: Person?
+    }
+    struct Parent: Decodable { var sha: String }
+    struct File: Decodable {
+        var filename: String
+        var previousFilename: String?
+        var status: String
+        var additions: Int?
+        var deletions: Int?
+        var patch: String?
+
+        enum CodingKeys: String, CodingKey {
+            case filename, status, additions, deletions, patch
+            case previousFilename = "previous_filename"
+        }
+
+        var change: GitCommitFileChange {
+            let kind: GitCommitFileStatus
+            switch status {
+            case "added": kind = .added
+            case "removed": kind = .removed
+            case "renamed": kind = .renamed
+            case "copied": kind = .copied
+            case "modified", "changed": kind = .modified
+            default: kind = .unknown
+            }
+            // GitHub leaves the patch out for binary files and for very large changes; with
+            // nothing to show either way, a missing patch with no line counts reads as binary.
+            let lines = (additions ?? 0) + (deletions ?? 0)
+            return GitCommitFileChange(
+                path: filename,
+                previousPath: previousFilename,
+                status: kind,
+                additions: additions ?? 0,
+                deletions: deletions ?? 0,
+                patch: patch.map { $0.hasSuffix("\n") ? $0 : $0 + "\n" },
+                isBinary: patch == nil && lines == 0 && kind != .renamed)
+        }
+    }
+
+    var sha: String
+    var commit: Inner
+    var parents: [Parent]
+    var htmlURL: URL?
+    var files: [File]?
+
+    enum CodingKeys: String, CodingKey {
+        case sha, commit, parents, files
+        case htmlURL = "html_url"
+    }
+
+    var summary: GitCommitSummary {
+        GitCommitSummary(
+            sha: sha,
+            message: commit.message,
+            authorName: commit.author?.name ?? "",
+            authorEmail: commit.author?.email,
+            authoredAt: commit.author?.date,
+            parentSHAs: parents.map(\.sha),
+            webURL: htmlURL)
+    }
+}
+
+private struct GitHubPullRequestListDTO: Decodable {
+    struct User: Decodable { var login: String }
+    var id: Int
+    var number: Int?
+    var title: String
+    var body: String?
+    var state: String
+    var draft: Bool?
+    var mergedAt: Date?
+    var createdAt: Date?
+    var updatedAt: Date?
+    var htmlURL: URL
+    var user: User?
+    var head: GitHubPullRequestRefDTO
+    var base: GitHubPullRequestRefDTO
+
+    enum CodingKeys: String, CodingKey {
+        case id, number, title, body, state, draft, user, head, base
+        case mergedAt = "merged_at"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case htmlURL = "html_url"
+    }
+
+    var pullRequest: GitPullRequest {
+        GitPullRequest(
+            id: String(id),
+            number: number,
+            title: title,
+            webURL: htmlURL,
+            sourceBranch: head.ref,
+            targetBranch: base.ref,
+            providerName: "GitHub",
+            state: state == "open" ? .open : (mergedAt != nil ? .merged : .closed),
+            authorName: user?.login,
+            body: body,
+            isDraft: draft ?? false,
+            createdAt: createdAt,
+            updatedAt: updatedAt)
     }
 }
