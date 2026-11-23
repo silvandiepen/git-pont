@@ -528,8 +528,29 @@ public struct GitPullRequest: Hashable, Sendable, Codable {
     public var sourceBranch: String
     public var targetBranch: String
     public var providerName: String
+    /// Filled in by listing (`pullRequests`); creating or finding one leaves them as they are.
+    public var state: GitPullRequestState?
+    public var authorName: String?
+    public var body: String?
+    public var isDraft: Bool
+    public var createdAt: Date?
+    public var updatedAt: Date?
 
-    public init(id: String, number: Int? = nil, title: String, webURL: URL, sourceBranch: String, targetBranch: String, providerName: String) {
+    public init(
+        id: String,
+        number: Int? = nil,
+        title: String,
+        webURL: URL,
+        sourceBranch: String,
+        targetBranch: String,
+        providerName: String,
+        state: GitPullRequestState? = nil,
+        authorName: String? = nil,
+        body: String? = nil,
+        isDraft: Bool = false,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil
+    ) {
         self.id = id
         self.number = number
         self.title = title
@@ -537,6 +558,35 @@ public struct GitPullRequest: Hashable, Sendable, Codable {
         self.sourceBranch = sourceBranch
         self.targetBranch = targetBranch
         self.providerName = providerName
+        self.state = state
+        self.authorName = authorName
+        self.body = body
+        self.isDraft = isDraft
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, number, title, webURL, sourceBranch, targetBranch, providerName
+        case state, authorName, body, isDraft, createdAt, updatedAt
+    }
+
+    // Written by older versions without the listing fields: those read as absent.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        number = try container.decodeIfPresent(Int.self, forKey: .number)
+        title = try container.decode(String.self, forKey: .title)
+        webURL = try container.decode(URL.self, forKey: .webURL)
+        sourceBranch = try container.decode(String.self, forKey: .sourceBranch)
+        targetBranch = try container.decode(String.self, forKey: .targetBranch)
+        providerName = try container.decode(String.self, forKey: .providerName)
+        state = try container.decodeIfPresent(GitPullRequestState.self, forKey: .state)
+        authorName = try container.decodeIfPresent(String.self, forKey: .authorName)
+        body = try container.decodeIfPresent(String.self, forKey: .body)
+        isDraft = try container.decodeIfPresent(Bool.self, forKey: .isDraft) ?? false
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
     }
 }
 

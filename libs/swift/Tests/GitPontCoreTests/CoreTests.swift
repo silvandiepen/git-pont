@@ -847,3 +847,61 @@ private struct NoopHTTPClient: HTTPClient {
         throw GitPontError.providerUnavailable("NoopHTTPClient does not send requests")
     }
 }
+
+@Suite("Unified diff")
+struct UnifiedDiffTests {
+    @Test func readsModifiedAddedRemovedRenamedAndBinaryFiles() {
+        let text = """
+        diff --git a/src/a.swift b/src/a.swift
+        index 1111111..2222222 100644
+        --- a/src/a.swift
+        +++ b/src/a.swift
+        @@ -1,3 +1,3 @@
+         one
+        -two
+        +TWO
+         three
+        diff --git a/new.txt b/new.txt
+        new file mode 100644
+        --- /dev/null
+        +++ b/new.txt
+        @@ -0,0 +1 @@
+        +hello
+        diff --git a/old.txt b/old.txt
+        deleted file mode 100644
+        --- a/old.txt
+        +++ /dev/null
+        @@ -1 +0,0 @@
+        -bye
+        diff --git a/x.txt b/y.txt
+        similarity index 100%
+        rename from x.txt
+        rename to y.txt
+        diff --git a/logo.png b/logo.png
+        Binary files a/logo.png and b/logo.png differ
+
+        """
+        let files = GitUnifiedDiff.files(fromGitDiff: text)
+        #expect(files.map(\.path) == ["src/a.swift", "new.txt", "old.txt", "y.txt", "logo.png"])
+        #expect(files.map(\.status) == [.modified, .added, .removed, .renamed, .modified])
+        #expect(files[0].patch == "@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n")
+        #expect(files[0].additions == 1 && files[0].deletions == 1)
+        #expect(files[3].previousPath == "x.txt")
+        #expect(files[3].patch == nil)
+        #expect(files[4].isBinary && files[4].patch == nil)
+    }
+
+    @Test func commitSummarySplitsSubjectAndBody() {
+        let commit = GitCommitSummary(sha: "abcdef123", message: "Subject\n\nBody line.\n", authorName: "A")
+        #expect(commit.subject == "Subject")
+        #expect(commit.body == "Body line.")
+        #expect(commit.shortSHA == "abcdef1")
+    }
+
+    @Test func pullRequestsWrittenBeforeListingFieldsStillDecode() throws {
+        let old = #"{"id":"1","title":"T","webURL":"https://example.com/1","sourceBranch":"a","targetBranch":"main","providerName":"GitHub"}"#
+        let pullRequest = try JSONDecoder().decode(GitPullRequest.self, from: Data(old.utf8))
+        #expect(pullRequest.state == nil)
+        #expect(pullRequest.isDraft == false)
+    }
+}
