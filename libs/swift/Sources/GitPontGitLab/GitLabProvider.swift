@@ -6,7 +6,7 @@ import CryptoKit
 public struct GitLabProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { instances.first?.kind ?? .gitLabCloud }
     public let displayName = "GitLab"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .treeList, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .treeList, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials, .commitHistory, .pullRequestList]
     public let changeRequestTerm: GitChangeRequestTerm = .mergeRequest
 
     private let httpClient: any HTTPClient
@@ -1210,5 +1210,248 @@ extension GitLabProvider {
 extension GitLabProvider {
     public func webURL(for reference: GitFileReference) -> URL? {
         GitPontWebURL.file(reference, marker: "-/blob")
+    }
+}
+
+// MARK: - Commit history and merge request lists
+
+extension GitLabProvider {
+    public func commits(_ query: GitCommitHistoryQuery, context: GitProviderRequestContext) async throws -> GitList<GitCommitSummary> {
+        var items = [
+            URLQueryItem(name: "per_page", value: String(query.perPage)),
+            URLQueryItem(name: "page", value: String(query.page))
+        ]
+        if let ref = query.ref, !ref.isEmpty { items.append(URLQueryItem(name: "ref_name", value: ref)) }
+        if let path = query.path, !path.isEmpty { items.append(URLQueryItem(name: "path", value: path)) }
+        let url = commitsURL(query.repository).gitPontAppendingQuery(items)
+        let response = try await httpClient.send(HTTPRequest(method: "GET", url: url, headers: try headers(for: context)))
+        try validate(response)
+        let dtos: [GitLabCommitSummaryDTO]
+        do { dtos = try decoder.decode([GitLabCommitSummaryDTO].self, from: response.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+        return GitList(items: dtos.map(\.summary), truncated: response.gitLabHasNextPage)
+    }
+
+    public func commit(sha: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitCommitDetail {
+        let requestHeaders = try headers(for: context)
+        let commitURL = commitsURL(repository).gitPontAppendingEncodedPathComponent(
+            sha.addingPercentEncoding(withAllowedCharacters: .gitLabPathAllowed) ?? sha)
+        let commitResponse = try await httpClient.send(HTTPRequest(method: "GET", url: commitURL, headers: requestHeaders))
+        try validate(commitResponse)
+        let dto: GitLabCommitSummaryDTO
+        do { dto = try decoder.decode(GitLabCommitSummaryDTO.self, from: commitResponse.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+
+        let diffURL = commitURL.appendingPathComponent("diff")
+            .gitPontAppendingQuery([URLQueryItem(name: "per_page", value: "100")])
+        let diffResponse = try await httpClient.send(HTTPRequest(method: "GET", url: diffURL, headers: requestHeaders))
+        try validate(diffResponse)
+        let diffs: [GitLabCommitDiffDTO]
+        do { diffs = try decoder.decode([GitLabCommitDiffDTO].self, from: diffResponse.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+        return GitCommitDetail(
+            summary: dto.summary,
+            files: diffs.map(\.change),
+            filesTruncated: diffResponse.gitLabHasNextPage)
+    }
+
+    public func pullRequests(_ query: GitPullRequestListQuery, context: GitProviderRequestContext) async throws -> GitList<GitPullRequest> {
+        // GitLab's `closed` leaves merged merge requests out (they are `merged`), so the
+        // closed filter lists only those closed without merging.
+        let state: String
+        switch query.filter {
+        case .open: state = "opened"
+        case .closed: state = "closed"
+        case .all: state = "all"
+        }
+        let url = query.repository.instance.apiBaseURL
+            .appendingPathComponent("projects")
+            .gitPontAppendingEncodedPathComponent(projectID(for: query.repository))
+            .appendingPathComponent("merge_requests")
+            .gitPontAppendingQuery([
+                URLQueryItem(name: "state", value: state),
+                URLQueryItem(name: "order_by", value: "updated_at"),
+                URLQueryItem(name: "sort", value: "desc"),
+                URLQueryItem(name: "per_page", value: String(query.perPage)),
+                URLQueryItem(name: "page", value: String(query.page))
+            ])
+        let response = try await httpClient.send(HTTPRequest(method: "GET", url: url, headers: try headers(for: context)))
+        try validate(response)
+        let dtos: [GitLabMergeRequestListDTO]
+        do { dtos = try decoder.decode([GitLabMergeRequestListDTO].self, from: response.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+        return GitList(items: dtos.map(\.pullRequest), truncated: response.gitLabHasNextPage)
+    }
+
+    private func commitsURL(_ repository: GitRepositoryReference) -> URL {
+        repository.instance.apiBaseURL
+            .appendingPathComponent("projects")
+            .gitPontAppendingEncodedPathComponent(projectID(for: repository))
+            .appendingPathComponent("repository")
+            .appendingPathComponent("commits")
+    }
+}
+
+private extension HTTPResponse {
+    /// GitLab names the next page in `X-Next-Page`, empty on the last one.
+    var gitLabHasNextPage: Bool {
+        guard let next = header("x-next-page") else { return false }
+        return !next.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+}
+
+/// GitLab writes timestamps with milliseconds (`2026-11-20T08:45:00.000+01:00`), which the
+/// decoder's plain ISO 8601 strategy rejects; these fields are read as text and parsed here.
+private func gitLabDate(_ value: String?) -> Date? {
+    guard let value, !value.isEmpty else { return nil }
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: value) { return date }
+    return ISO8601DateFormatter().date(from: value)
+}
+
+private struct GitLabCommitSummaryDTO: Decodable {
+    var id: String
+    var message: String?
+    var title: String?
+    var authorName: String?
+    var authorEmail: String?
+    var authoredDate: String?
+    var parentIDs: [String]?
+    var webURL: URL?
+
+    enum CodingKeys: String, CodingKey {
+        case id, message, title
+        case authorName = "author_name"
+        case authorEmail = "author_email"
+        case authoredDate = "authored_date"
+        case parentIDs = "parent_ids"
+        case webURL = "web_url"
+    }
+
+    var summary: GitCommitSummary {
+        GitCommitSummary(
+            sha: id,
+            message: message ?? title ?? "",
+            authorName: authorName ?? "",
+            authorEmail: authorEmail,
+            authoredAt: gitLabDate(authoredDate),
+            parentSHAs: parentIDs ?? [],
+            webURL: webURL)
+    }
+}
+
+private struct GitLabCommitDiffDTO: Decodable {
+    var diff: String?
+    var newPath: String
+    var oldPath: String?
+    var newFile: Bool?
+    var renamedFile: Bool?
+    var deletedFile: Bool?
+    var binary: Bool?
+    var tooLarge: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case diff, binary
+        case newPath = "new_path"
+        case oldPath = "old_path"
+        case newFile = "new_file"
+        case renamedFile = "renamed_file"
+        case deletedFile = "deleted_file"
+        case tooLarge = "too_large"
+    }
+
+    var change: GitCommitFileChange {
+        let status: GitCommitFileStatus
+        if newFile == true {
+            status = .added
+        } else if deletedFile == true {
+            status = .removed
+        } else if renamedFile == true {
+            status = .renamed
+        } else {
+            status = .modified
+        }
+        let text = diff ?? ""
+        // GitLab sends no hunks for a binary file, only git's one-line notice, if anything.
+        let isBinary = binary == true || text.hasPrefix("Binary files ")
+        let patch = isBinary || tooLarge == true ? nil : hunks(text)
+        let counts = patch.map(GitUnifiedDiff.lineCounts(of:)) ?? (additions: 0, deletions: 0)
+        return GitCommitFileChange(
+            path: newPath,
+            previousPath: status == .renamed ? oldPath : nil,
+            status: status,
+            additions: counts.additions,
+            deletions: counts.deletions,
+            patch: patch,
+            isBinary: isBinary)
+    }
+
+    /// The text from the first `@@` line on, ending with a newline; `nil` when there is none.
+    private func hunks(_ text: String) -> String? {
+        let start: String.Index
+        if text.hasPrefix("@@") {
+            start = text.startIndex
+        } else if let range = text.range(of: "\n@@") {
+            start = text.index(after: range.lowerBound)
+        } else {
+            return nil
+        }
+        let patch = String(text[start...])
+        return patch.hasSuffix("\n") ? patch : patch + "\n"
+    }
+}
+
+private struct GitLabMergeRequestListDTO: Decodable {
+    struct Author: Decodable { var username: String }
+    var id: Int
+    var iid: Int?
+    var title: String
+    var description: String?
+    var state: String
+    var draft: Bool?
+    var workInProgress: Bool?
+    var author: Author?
+    var sourceBranch: String
+    var targetBranch: String
+    var webURL: URL
+    var createdAt: String?
+    var updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, iid, title, description, state, draft, author
+        case workInProgress = "work_in_progress"
+        case sourceBranch = "source_branch"
+        case targetBranch = "target_branch"
+        case webURL = "web_url"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    var pullRequest: GitPullRequest {
+        let mapped: GitPullRequestState
+        switch state {
+        case "opened": mapped = .open
+        case "merged": mapped = .merged
+        default: mapped = .closed // closed, locked
+        }
+        return GitPullRequest(
+            id: String(id),
+            number: iid,
+            title: title,
+            webURL: webURL,
+            sourceBranch: sourceBranch,
+            targetBranch: targetBranch,
+            providerName: "GitLab",
+            state: mapped,
+            authorName: author?.username,
+            body: description,
+            isDraft: draft ?? workInProgress ?? false,
+            createdAt: gitLabDate(createdAt),
+            updatedAt: gitLabDate(updatedAt))
     }
 }

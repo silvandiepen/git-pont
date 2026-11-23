@@ -271,6 +271,33 @@ public final class GitPont: Sendable {
         }
     }
 
+    /// Commits of a ref, newest first, one page at a time.
+    public func commits(_ query: GitCommitHistoryQuery) async throws -> GitList<GitCommitSummary> {
+        let provider = try provider(for: query.repository.instance)
+        let context = try await optionalContext(for: query.repository.instance)
+        return try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.commits(query, context: $0)
+        }
+    }
+
+    /// One commit with every file it changed.
+    public func commit(sha: String, in repository: GitRepositoryReference) async throws -> GitCommitDetail {
+        let provider = try provider(for: repository.instance)
+        let context = try await optionalContext(for: repository.instance)
+        return try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.commit(sha: sha, repository: repository, context: $0)
+        }
+    }
+
+    /// Pull or merge requests of a repository, newest first.
+    public func pullRequests(_ query: GitPullRequestListQuery) async throws -> GitList<GitPullRequest> {
+        let provider = try provider(for: query.repository.instance)
+        let context = try await optionalContext(for: query.repository.instance)
+        return try await retryingAuthentication(provider: provider, context: context) {
+            try await provider.pullRequests(query, context: $0)
+        }
+    }
+
     public func submitChange(_ submission: GitChangeSubmission) async throws -> GitChangeResult {
         switch submission.strategy {
         case .directCommit:

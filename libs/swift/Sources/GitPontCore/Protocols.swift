@@ -70,6 +70,14 @@ public protocol GitProvider: Sendable {
     func forkRepository(_ reference: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitRepository
     func createPullRequest(_ request: GitPullRequestRequest, context: GitProviderRequestContext) async throws -> GitPullRequest
     func findPullRequest(_ query: GitPullRequestQuery, context: GitProviderRequestContext) async throws -> GitPullRequest?
+    /// Commits of a ref, newest first. `truncated` is set when there is another page.
+    /// Providers that can advertise `.commitHistory`.
+    func commits(_ query: GitCommitHistoryQuery, context: GitProviderRequestContext) async throws -> GitList<GitCommitSummary>
+    /// One commit with every file it changed and each file's patch. `.commitHistory`.
+    func commit(sha: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitCommitDetail
+    /// Pull or merge requests, newest first. `truncated` is set when there is another page.
+    /// Providers that can advertise `.pullRequestList`.
+    func pullRequests(_ query: GitPullRequestListQuery, context: GitProviderRequestContext) async throws -> GitList<GitPullRequest>
 }
 
 public extension GitProvider {
@@ -97,6 +105,18 @@ public extension GitProvider {
 
     func findPullRequest(_ query: GitPullRequestQuery, context: GitProviderRequestContext) async throws -> GitPullRequest? {
         throw GitPontError.unsupportedCapability("findPullRequest")
+    }
+
+    func commits(_ query: GitCommitHistoryQuery, context: GitProviderRequestContext) async throws -> GitList<GitCommitSummary> {
+        throw GitPontError.unsupportedCapability("commits")
+    }
+
+    func commit(sha: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitCommitDetail {
+        throw GitPontError.unsupportedCapability("commit")
+    }
+
+    func pullRequests(_ query: GitPullRequestListQuery, context: GitProviderRequestContext) async throws -> GitList<GitPullRequest> {
+        throw GitPontError.unsupportedCapability("pullRequests")
     }
 }
 

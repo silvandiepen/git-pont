@@ -5,7 +5,7 @@ import GitPontCore
 public struct BitbucketProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { .bitbucketCloud }
     public let displayName = "Bitbucket"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials, .commitHistory, .pullRequestList]
     public let changeRequestTerm: GitChangeRequestTerm = .pullRequest
 
     private let httpClient: any HTTPClient
@@ -14,7 +14,9 @@ public struct BitbucketProvider: GitProvider, GitAuthenticationProvider {
 
     public init(httpClient: any HTTPClient) {
         self.httpClient = httpClient
-        decoder.dateDecodingStrategy = .iso8601
+        // Bitbucket stamps dates with microseconds and an offset ("…T10:11:12.123456+00:00"),
+        // which `.iso8601` rejects; accept both forms.
+        decoder.dateDecodingStrategy = .custom(bitbucketDate(from:))
         encoder.outputFormatting = [.sortedKeys]
     }
 
@@ -364,6 +366,17 @@ public struct BitbucketProvider: GitProvider, GitAuthenticationProvider {
             throw GitPontError.invalidProviderResponse("Bitbucket returned \(response.statusCode)")
         }
     }
+}
+
+private func bitbucketDate(from decoder: Decoder) throws -> Date {
+    let container = try decoder.singleValueContainer()
+    let text = try container.decode(String.self)
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text) {
+        return date
+    }
+    throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not an ISO 8601 date: \(text)")
 }
 
 private let multipartBoundary = "GitPontBoundary7MA4YWxkTrZu0gW"
@@ -742,6 +755,167 @@ extension BitbucketProvider {
 
 private struct BitbucketHookDTO: Decodable {
     var uuid: String
+}
+
+// MARK: - Commit history and pull request lists
+
+extension BitbucketProvider {
+    public func commits(_ query: GitCommitHistoryQuery, context: GitProviderRequestContext) async throws -> GitList<GitCommitSummary> {
+        // `/commits` without a ref walks every branch; fall back to it only when the default
+        // branch is not known.
+        var url = repositoryURL(query.repository).appendingPathComponent("commits")
+        if let ref = (query.ref?.isEmpty == false ? query.ref : nil) ?? query.repository.defaultBranch, !ref.isEmpty {
+            url = url.gitPontAppendingEncodedPathComponent(ref.gitPontPathEncoded)
+        }
+        var items: [URLQueryItem] = []
+        if let path = query.path, !path.isEmpty { items.append(URLQueryItem(name: "path", value: path)) }
+        items.append(URLQueryItem(name: "pagelen", value: String(query.perPage)))
+        items.append(URLQueryItem(name: "page", value: String(query.page)))
+        let page: BitbucketPage<BitbucketCommitListDTO> = try await sendJSON(HTTPRequest(
+            method: "GET",
+            url: url.gitPontAppendingQuery(items),
+            headers: try headers(for: context)
+        ))
+        return GitList(items: page.values.map(\.summary), truncated: page.next != nil)
+    }
+
+    public func commit(sha: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitCommitDetail {
+        let dto: BitbucketCommitListDTO = try await sendJSON(HTTPRequest(
+            method: "GET",
+            url: repositoryURL(repository).appendingPathComponent("commit").gitPontAppendingEncodedPathComponent(sha.gitPontPathEncoded),
+            headers: try headers(for: context)
+        ))
+        // The diff is plain `git diff` text; Bitbucket answers with a redirect to the
+        // `{sha}..{parent}` form, which the HTTP client follows.
+        var diffHeaders = try headers(for: context)
+        diffHeaders["Accept"] = "text/plain"
+        let response = try await httpClient.send(HTTPRequest(
+            method: "GET",
+            url: repositoryURL(repository).appendingPathComponent("diff").gitPontAppendingEncodedPathComponent(sha.gitPontPathEncoded),
+            headers: diffHeaders
+        ))
+        try validate(response)
+        let files = GitUnifiedDiff.files(fromGitDiff: String(decoding: response.body, as: UTF8.self))
+        return GitCommitDetail(summary: dto.summary, files: files, filesTruncated: false)
+    }
+
+    public func pullRequests(_ query: GitPullRequestListQuery, context: GitProviderRequestContext) async throws -> GitList<GitPullRequest> {
+        let states: [String]
+        switch query.filter {
+        case .open: states = ["OPEN"]
+        case .closed: states = ["MERGED", "DECLINED", "SUPERSEDED"]
+        case .all: states = ["OPEN", "MERGED", "DECLINED", "SUPERSEDED"]
+        }
+        let page: BitbucketPage<BitbucketPullRequestListDTO> = try await sendJSON(HTTPRequest(
+            method: "GET",
+            url: repositoryURL(query.repository)
+                .appendingPathComponent("pullrequests")
+                .gitPontAppendingQuery(states.map { URLQueryItem(name: "state", value: $0) } + [
+                    URLQueryItem(name: "sort", value: "-updated_on"),
+                    URLQueryItem(name: "pagelen", value: String(query.perPage)),
+                    URLQueryItem(name: "page", value: String(query.page))
+                ]),
+            headers: try headers(for: context)
+        ))
+        return GitList(items: page.values.map(\.pullRequest), truncated: page.next != nil)
+    }
+}
+
+private struct BitbucketCommitListDTO: Decodable {
+    struct Author: Decodable {
+        struct User: Decodable {
+            var displayName: String?
+            enum CodingKeys: String, CodingKey { case displayName = "display_name" }
+        }
+        /// "Name <email>", as the commit carries it.
+        var raw: String?
+        var user: User?
+    }
+
+    var hash: String
+    var message: String?
+    var author: Author?
+    var date: Date?
+    var parents: [BitbucketHashDTO]?
+    var links: BitbucketLinksDTO?
+
+    var summary: GitCommitSummary {
+        let raw = author?.raw.map(BitbucketRawAuthor.init(raw:))
+        let name = author?.user?.displayName ?? raw?.name ?? ""
+        return GitCommitSummary(
+            sha: hash,
+            message: message ?? "",
+            authorName: name,
+            authorEmail: raw?.email,
+            authoredAt: date,
+            parentSHAs: (parents ?? []).map(\.hash),
+            webURL: links?.html?.href)
+    }
+}
+
+/// Splits git's "Name <email>" author line.
+private struct BitbucketRawAuthor {
+    var name: String
+    var email: String?
+
+    init(raw: String) {
+        guard let open = raw.lastIndex(of: "<"), let close = raw.lastIndex(of: ">"), open < close else {
+            name = raw.trimmingCharacters(in: .whitespaces)
+            email = nil
+            return
+        }
+        name = raw[..<open].trimmingCharacters(in: .whitespaces)
+        let address = raw[raw.index(after: open)..<close].trimmingCharacters(in: .whitespaces)
+        email = address.isEmpty ? nil : address
+    }
+}
+
+private struct BitbucketPullRequestListDTO: Decodable {
+    struct Author: Decodable {
+        var displayName: String?
+        enum CodingKeys: String, CodingKey { case displayName = "display_name" }
+    }
+
+    var id: Int
+    var title: String
+    var description: String?
+    var state: String
+    var draft: Bool?
+    var author: Author?
+    var source: BitbucketPullRequestEndpoint?
+    var destination: BitbucketPullRequestEndpoint?
+    var links: BitbucketLinksDTO?
+    var createdOn: Date?
+    var updatedOn: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, description, state, draft, author, source, destination, links
+        case createdOn = "created_on"
+        case updatedOn = "updated_on"
+    }
+
+    var pullRequest: GitPullRequest {
+        let listState: GitPullRequestState
+        switch state {
+        case "OPEN": listState = .open
+        case "MERGED": listState = .merged
+        default: listState = .closed // DECLINED, SUPERSEDED
+        }
+        return GitPullRequest(
+            id: String(id),
+            number: id,
+            title: title,
+            webURL: links?.html?.href ?? URL(string: "https://bitbucket.org")!,
+            sourceBranch: source?.branch.name ?? "",
+            targetBranch: destination?.branch.name ?? "",
+            providerName: "Bitbucket",
+            state: listState,
+            authorName: author?.displayName,
+            body: description.flatMap { $0.isEmpty ? nil : $0 },
+            isDraft: draft ?? false,
+            createdAt: createdOn,
+            updatedAt: updatedOn)
+    }
 }
 
 // MARK: - Browser links

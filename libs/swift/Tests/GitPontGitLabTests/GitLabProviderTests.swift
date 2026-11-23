@@ -668,3 +668,168 @@ private let authenticatedContext = GitProviderRequestContext(
     ),
     credential: GitCredential(accessToken: "secret-token")
 )
+
+private func encodedPath(_ url: URL?) -> String? {
+    url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath }
+}
+
+private func querySet(_ url: URL?) -> Set<String> {
+    Set(url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems }?.map { "\($0.name)=\($0.value ?? "")" } ?? [])
+}
+
+@Suite("GitLabProvider history")
+struct GitLabProviderHistoryTests {
+    @Test func commitsListsNewestFirstWithPaging() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(
+                statusCode: 200,
+                headers: ["X-Next-Page": "3"],
+                body: Data(#"""
+                [{"id":"abc1234def","short_id":"abc1234","title":"Fix the parser","message":"Fix the parser\n\nIt dropped the last line.",
+                  "author_name":"Mona","author_email":"mona@example.com","authored_date":"2026-11-20T09:45:00.000+01:00",
+                  "parent_ids":["p1","p2"],"web_url":"https://gitlab.com/group/project/-/commit/abc1234def"}]
+                """#.utf8))
+        ])
+        let provider = GitLabProvider(httpClient: client)
+
+        let list = try await provider.commits(
+            GitCommitHistoryQuery(repository: repositoryReference, ref: "main", path: "src/a.swift", page: 2, perPage: 20),
+            context: authenticatedContext)
+
+        let commit = try #require(list.items.first)
+        #expect(commit.sha == "abc1234def")
+        #expect(commit.subject == "Fix the parser")
+        #expect(commit.body == "It dropped the last line.")
+        #expect(commit.authorName == "Mona")
+        #expect(commit.authorEmail == "mona@example.com")
+        #expect(commit.isMerge)
+        #expect(commit.authoredAt == ISO8601DateFormatter().date(from: "2026-11-20T08:45:00Z"))
+        #expect(commit.webURL?.absoluteString == "https://gitlab.com/group/project/-/commit/abc1234def")
+        #expect(list.truncated)
+        let url = await client.requests.first?.url
+        #expect(url?.host == "gitlab.com")
+        #expect(encodedPath(url) == "/api/v4/projects/group%2Fproject/repository/commits")
+        #expect(querySet(url) == ["ref_name=main", "path=src/a.swift", "page=2", "per_page=20"])
+    }
+
+    @Test func commitsOnTheLastPageAreNotTruncated() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, headers: ["X-Next-Page": ""], body: Data("[]".utf8))
+        ])
+        let provider = GitLabProvider(httpClient: client)
+
+        let list = try await provider.commits(GitCommitHistoryQuery(repository: repositoryReference), context: authenticatedContext)
+
+        #expect(list.items.isEmpty)
+        #expect(list.truncated == false)
+        #expect(querySet(await client.requests.first?.url) == ["page=1", "per_page=30"])
+    }
+
+    @Test func commitReadsFilesWithTheirPatches() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"""
+            {"id":"abc","title":"Rename","message":"Rename","author_name":"Mona","authored_date":"2026-11-20T08:45:00Z","parent_ids":["p"]}
+            """#.utf8)),
+            HTTPResponse(statusCode: 200, headers: ["X-Next-Page": "2"], body: Data(#"""
+            [{"diff":"@@ -1 +1 @@\n-a\n+b","new_path":"b.txt","old_path":"a.txt","new_file":false,"renamed_file":true,"deleted_file":false},
+             {"diff":"@@ -0,0 +1,2 @@\n+one\n+two\n","new_path":"new.txt","old_path":"new.txt","new_file":true,"renamed_file":false,"deleted_file":false},
+             {"diff":"@@ -1 +0,0 @@\n-gone\n","new_path":"old.txt","old_path":"old.txt","new_file":false,"renamed_file":false,"deleted_file":true},
+             {"diff":"Binary files /dev/null and b/logo.png differ\n","new_path":"logo.png","old_path":"logo.png","new_file":true,"renamed_file":false,"deleted_file":false}]
+            """#.utf8))
+        ])
+        let provider = GitLabProvider(httpClient: client)
+
+        let detail = try await provider.commit(sha: "abc", repository: repositoryReference, context: authenticatedContext)
+
+        #expect(detail.summary.sha == "abc")
+        #expect(detail.summary.parentSHAs == ["p"])
+        #expect(detail.files.count == 4)
+        #expect(detail.files[0].status == .renamed)
+        #expect(detail.files[0].path == "b.txt")
+        #expect(detail.files[0].previousPath == "a.txt")
+        #expect(detail.files[0].patch == "@@ -1 +1 @@\n-a\n+b\n")
+        #expect(detail.files[0].additions == 1)
+        #expect(detail.files[0].deletions == 1)
+        #expect(detail.files[1].status == .added)
+        #expect(detail.files[1].previousPath == nil)
+        #expect(detail.files[1].additions == 2)
+        #expect(detail.files[2].status == .removed)
+        #expect(detail.files[2].deletions == 1)
+        #expect(detail.files[3].isBinary)
+        #expect(detail.files[3].patch == nil)
+        #expect(detail.filesTruncated)
+        let requests = await client.requests
+        #expect(requests.count == 2)
+        #expect(encodedPath(requests.first?.url) == "/api/v4/projects/group%2Fproject/repository/commits/abc")
+        #expect(encodedPath(requests.last?.url) == "/api/v4/projects/group%2Fproject/repository/commits/abc/diff")
+        #expect(querySet(requests.last?.url) == ["per_page=100"])
+    }
+
+    @Test func commitUsesTheSelfHostedAPIBase() async throws {
+        let instance = GitProviderInstance.gitLabSelfHosted(baseURL: URL(string: "https://git.example.com")!)
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"{"id":"abc","message":"Init","author_name":"Mona","parent_ids":[]}"#.utf8)),
+            HTTPResponse(statusCode: 200, body: Data("[]".utf8))
+        ])
+        let provider = GitLabProvider(httpClient: client, instances: [instance])
+
+        let detail = try await provider.commit(
+            sha: "abc",
+            repository: GitRepositoryReference(instance: instance, namespace: "team/sub", name: "app"),
+            context: authenticatedContext)
+
+        #expect(detail.files.isEmpty)
+        #expect(detail.filesTruncated == false)
+        let url = await client.requests.first?.url
+        #expect(url?.host == "git.example.com")
+        #expect(encodedPath(url) == "/api/v4/projects/team%2Fsub%2Fapp/repository/commits/abc")
+    }
+
+    @Test func mergeRequestsCarryStateAuthorAndDraft() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, headers: ["X-Next-Page": "2"], body: Data(#"""
+            [{"id":101,"iid":7,"title":"Add dark mode","description":"Follows the system.","state":"merged","draft":false,
+              "created_at":"2026-11-19T10:00:00.000Z","updated_at":"2026-11-21T10:00:00.000Z",
+              "web_url":"https://gitlab.com/group/project/-/merge_requests/7","author":{"username":"alex"},
+              "source_branch":"dark","target_branch":"main"},
+             {"id":102,"iid":8,"title":"WIP","description":null,"state":"opened","work_in_progress":true,
+              "web_url":"https://gitlab.com/group/project/-/merge_requests/8","source_branch":"wip","target_branch":"main"},
+             {"id":103,"iid":9,"title":"Dropped","state":"closed","draft":false,
+              "web_url":"https://gitlab.com/group/project/-/merge_requests/9","source_branch":"old","target_branch":"main"}]
+            """#.utf8))
+        ])
+        let provider = GitLabProvider(httpClient: client)
+
+        let list = try await provider.pullRequests(
+            GitPullRequestListQuery(repository: repositoryReference, filter: .all, page: 1, perPage: 3),
+            context: authenticatedContext)
+
+        #expect(list.items.map(\.state) == [.merged, .open, .closed])
+        #expect(list.items[0].id == "101")
+        #expect(list.items[0].number == 7)
+        #expect(list.items[0].authorName == "alex")
+        #expect(list.items[0].body == "Follows the system.")
+        #expect(list.items[0].sourceBranch == "dark")
+        #expect(list.items[0].targetBranch == "main")
+        #expect(list.items[0].providerName == "GitLab")
+        #expect(list.items[0].createdAt == ISO8601DateFormatter().date(from: "2026-11-19T10:00:00Z"))
+        #expect(list.items[0].updatedAt == ISO8601DateFormatter().date(from: "2026-11-21T10:00:00Z"))
+        #expect(list.items[0].isDraft == false)
+        #expect(list.items[1].isDraft)
+        #expect(list.items[1].body == nil)
+        #expect(list.truncated)
+        let url = await client.requests.first?.url
+        #expect(encodedPath(url) == "/api/v4/projects/group%2Fproject/merge_requests")
+        #expect(querySet(url) == ["state=all", "order_by=updated_at", "sort=desc", "per_page=3", "page=1"])
+    }
+
+    @Test func openMergeRequestFilterAsksForOpened() async throws {
+        let client = RecordingHTTPClient(responses: [HTTPResponse(statusCode: 200, body: Data("[]".utf8))])
+        let provider = GitLabProvider(httpClient: client)
+
+        let list = try await provider.pullRequests(GitPullRequestListQuery(repository: repositoryReference), context: authenticatedContext)
+
+        #expect(list.truncated == false)
+        #expect(querySet(await client.requests.first?.url).contains("state=opened"))
+    }
+}

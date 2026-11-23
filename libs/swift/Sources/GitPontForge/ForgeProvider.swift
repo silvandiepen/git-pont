@@ -6,7 +6,7 @@ import CryptoKit
 public struct ForgeProvider: GitProvider, GitAuthenticationProvider {
     public var kind: GitProviderKind { instances.first?.kind ?? .forgejo }
     public let displayName = "Forge"
-    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials]
+    public let capabilities: GitProviderCapabilities = [.publicFileRead, .authenticatedFileRead, .fileCommit, .fileDelete, .batchCommit, .webhooks, .directoryList, .branchCreate, .branchDelete, .repositoryCreate, .repositoryFork, .pullRequestCreate, .gitCLICredentials, .commitHistory, .pullRequestList]
     public let changeRequestTerm: GitChangeRequestTerm = .pullRequest
 
     private let httpClient: any HTTPClient
@@ -1139,5 +1139,159 @@ private struct ForgeHookDTO: Decodable {
 extension ForgeProvider {
     public func webURL(for reference: GitFileReference) -> URL? {
         GitPontWebURL.file(reference, marker: "src/branch")
+    }
+}
+
+// MARK: - Commit history and pull request lists
+
+extension ForgeProvider {
+    public func commits(_ query: GitCommitHistoryQuery, context: GitProviderRequestContext) async throws -> GitList<GitCommitSummary> {
+        var items = [
+            URLQueryItem(name: "limit", value: String(query.perPage)),
+            URLQueryItem(name: "page", value: String(query.page)),
+            // The list needs no per-file stats or file lists; leaving them out keeps it fast.
+            URLQueryItem(name: "stat", value: "false"),
+            URLQueryItem(name: "files", value: "false")
+        ]
+        if let ref = query.ref, !ref.isEmpty { items.append(URLQueryItem(name: "sha", value: ref)) }
+        if let path = query.path, !path.isEmpty { items.append(URLQueryItem(name: "path", value: path)) }
+        let url = repoURL(for: query.repository).appendingPathComponent("commits").gitPontAppendingQuery(items)
+        let response = try await httpClient.send(HTTPRequest(method: "GET", url: url, headers: try headers(for: context)))
+        try validate(response)
+        let dtos: [ForgeCommitListDTO]
+        do { dtos = try decoder.decode([ForgeCommitListDTO].self, from: response.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+        return GitList(items: dtos.map(\.summary), truncated: response.forgeHasMorePages)
+    }
+
+    public func commit(sha: String, repository: GitRepositoryReference, context: GitProviderRequestContext) async throws -> GitCommitDetail {
+        let commitURL = repoURL(for: repository).appendingPathComponent("git").appendingPathComponent("commits")
+        let dto: ForgeCommitListDTO = try await sendJSON(HTTPRequest(
+            method: "GET",
+            url: commitURL.appendingPathComponent(sha),
+            headers: try headers(for: context)
+        ))
+        // The commit's changes come as plain `git diff` text, which lists every file.
+        var diffHeaders = try headers(for: context)
+        diffHeaders["Accept"] = "text/plain"
+        let diffResponse = try await httpClient.send(HTTPRequest(
+            method: "GET",
+            url: commitURL.appendingPathComponent("\(sha).diff"),
+            headers: diffHeaders
+        ))
+        try validate(diffResponse)
+        let diff = String(decoding: diffResponse.body, as: UTF8.self)
+        return GitCommitDetail(
+            summary: dto.summary,
+            files: GitUnifiedDiff.files(fromGitDiff: diff),
+            filesTruncated: false)
+    }
+
+    public func pullRequests(_ query: GitPullRequestListQuery, context: GitProviderRequestContext) async throws -> GitList<GitPullRequest> {
+        let url = repoURL(for: query.repository).appendingPathComponent("pulls").gitPontAppendingQuery([
+            URLQueryItem(name: "state", value: query.filter.rawValue),
+            URLQueryItem(name: "sort", value: "recentupdate"),
+            URLQueryItem(name: "limit", value: String(query.perPage)),
+            URLQueryItem(name: "page", value: String(query.page))
+        ])
+        let response = try await httpClient.send(HTTPRequest(method: "GET", url: url, headers: try headers(for: context)))
+        try validate(response)
+        let dtos: [ForgePullRequestListDTO]
+        do { dtos = try decoder.decode([ForgePullRequestListDTO].self, from: response.body) } catch {
+            throw GitPontError.invalidProviderResponse(error.localizedDescription)
+        }
+        return GitList(items: dtos.map(\.pullRequest), truncated: response.forgeHasMorePages)
+    }
+}
+
+private extension HTTPResponse {
+    /// Gitea and Forgejo answer `X-HasMore` on paged lists; a `Link` with `rel="next"` says the same.
+    var forgeHasMorePages: Bool {
+        if let hasMore = header("X-HasMore") {
+            return hasMore.lowercased() == "true"
+        }
+        guard let link = header("Link") else { return false }
+        return link.split(separator: ",").contains { part in
+            part.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.contains("rel=\"next\"")
+        }
+    }
+}
+
+private struct ForgeCommitListDTO: Decodable {
+    struct Inner: Decodable {
+        struct Person: Decodable { var name: String?; var email: String?; var date: Date? }
+        var message: String
+        var author: Person?
+    }
+    struct Parent: Decodable { var sha: String }
+
+    var sha: String
+    var commit: Inner
+    var parents: [Parent]?
+    var htmlURL: URL?
+
+    enum CodingKeys: String, CodingKey {
+        case sha, commit, parents
+        case htmlURL = "html_url"
+    }
+
+    var summary: GitCommitSummary {
+        GitCommitSummary(
+            sha: sha,
+            message: commit.message,
+            authorName: commit.author?.name ?? "",
+            authorEmail: commit.author?.email,
+            authoredAt: commit.author?.date,
+            parentSHAs: (parents ?? []).map(\.sha),
+            webURL: htmlURL)
+    }
+}
+
+private struct ForgePullRequestListDTO: Decodable {
+    struct User: Decodable { var login: String }
+    var id: Int
+    var number: Int?
+    var title: String
+    var body: String?
+    var state: String
+    var merged: Bool?
+    var draft: Bool?
+    var createdAt: Date?
+    var updatedAt: Date?
+    var htmlURL: URL
+    var user: User?
+    var head: ForgePullRequestBranchDTO
+    var base: ForgePullRequestBranchDTO
+
+    enum CodingKeys: String, CodingKey {
+        case id, number, title, body, state, merged, draft, user, head, base
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case htmlURL = "html_url"
+    }
+
+    /// Older Gitea has no `draft` field and marks a draft by its title prefix instead.
+    var isDraft: Bool {
+        if let draft { return draft }
+        let title = title.lowercased()
+        return title.hasPrefix("wip:") || title.hasPrefix("[wip]")
+    }
+
+    var pullRequest: GitPullRequest {
+        GitPullRequest(
+            id: String(id),
+            number: number,
+            title: title,
+            webURL: htmlURL,
+            sourceBranch: head.ref,
+            targetBranch: base.ref,
+            providerName: "Forge",
+            state: state == "open" ? .open : (merged == true ? .merged : .closed),
+            authorName: user?.login,
+            body: body,
+            isDraft: isDraft,
+            createdAt: createdAt,
+            updatedAt: updatedAt)
     }
 }

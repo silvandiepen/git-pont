@@ -834,3 +834,85 @@ private func fixtureData(_ path: String) throws -> Data {
     )!
     return try Data(contentsOf: url)
 }
+
+@Suite("GitHubProvider history")
+struct GitHubProviderHistoryTests {
+    @Test func commitsListsNewestFirstWithPaging() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(
+                statusCode: 200,
+                headers: ["Link": #"<https://api.github.com/repositories/1/commits?page=3>; rel="next""#],
+                body: Data(#"""
+                [{"sha":"abc1234def","html_url":"https://github.com/owner/repo/commit/abc1234def",
+                  "commit":{"message":"Fix the parser\n\nIt dropped the last line.","author":{"name":"Mona","email":"mona@example.com","date":"2026-11-20T08:45:00Z"}},
+                  "parents":[{"sha":"p1"},{"sha":"p2"}]}]
+                """#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        let list = try await provider.commits(
+            GitCommitHistoryQuery(repository: repositoryReference, ref: "main", path: "src/a.swift", page: 2, perPage: 20),
+            context: authenticatedContext)
+
+        let commit = try #require(list.items.first)
+        #expect(commit.sha == "abc1234def")
+        #expect(commit.subject == "Fix the parser")
+        #expect(commit.body == "It dropped the last line.")
+        #expect(commit.authorName == "Mona")
+        #expect(commit.isMerge)
+        #expect(commit.authoredAt == ISO8601DateFormatter().date(from: "2026-11-20T08:45:00Z"))
+        #expect(list.truncated)
+        let url = try #require(await client.requests.first?.url)
+        let query = Set(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.map { "\($0.name)=\($0.value ?? "")" } ?? [])
+        #expect(url.path == "/repos/owner/repo/commits")
+        #expect(query == ["sha=main", "path=src/a.swift", "page=2", "per_page=20"])
+    }
+
+    @Test func commitReadsFilesWithTheirPatches() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"""
+            {"sha":"abc","commit":{"message":"Rename","author":{"name":"Mona","date":"2026-11-20T08:45:00Z"}},"parents":[{"sha":"p"}],
+             "files":[
+               {"filename":"b.txt","previous_filename":"a.txt","status":"renamed","additions":1,"deletions":1,"patch":"@@ -1 +1 @@\n-a\n+b"},
+               {"filename":"logo.png","status":"added","additions":0,"deletions":0}
+             ]}
+            """#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        let detail = try await provider.commit(sha: "abc", repository: repositoryReference, context: authenticatedContext)
+
+        #expect(detail.files.count == 2)
+        #expect(detail.files[0].status == .renamed)
+        #expect(detail.files[0].previousPath == "a.txt")
+        #expect(detail.files[0].patch == "@@ -1 +1 @@\n-a\n+b\n")
+        #expect(detail.files[1].isBinary)
+        #expect(detail.filesTruncated == false)
+        #expect(await client.requests.first?.url.path == "/repos/owner/repo/commits/abc")
+    }
+
+    @Test func pullRequestsCarryStateAuthorAndDraft() async throws {
+        let client = RecordingHTTPClient(responses: [
+            HTTPResponse(statusCode: 200, body: Data(#"""
+            [{"id":1,"number":7,"title":"Add dark mode","body":"Follows the system.","state":"closed","draft":false,
+              "merged_at":"2026-11-21T10:00:00Z","created_at":"2026-11-19T10:00:00Z","updated_at":"2026-11-21T10:00:00Z",
+              "html_url":"https://github.com/owner/repo/pull/7","user":{"login":"alex"},"head":{"ref":"dark"},"base":{"ref":"main"}},
+             {"id":2,"number":8,"title":"WIP","state":"open","draft":true,"html_url":"https://github.com/owner/repo/pull/8",
+              "head":{"ref":"wip"},"base":{"ref":"main"}}]
+            """#.utf8))
+        ])
+        let provider = GitHubProvider(httpClient: client)
+
+        let list = try await provider.pullRequests(
+            GitPullRequestListQuery(repository: repositoryReference, filter: .all),
+            context: authenticatedContext)
+
+        #expect(list.items.map(\.state) == [.merged, .open])
+        #expect(list.items[0].authorName == "alex")
+        #expect(list.items[0].body == "Follows the system.")
+        #expect(list.items[1].isDraft)
+        #expect(list.truncated == false)
+        let url = try #require(await client.requests.first?.url)
+        #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(URLQueryItem(name: "state", value: "all")) == true)
+    }
+}
